@@ -1,72 +1,280 @@
-from fastapi import FastAPI, APIRouter
+from fastapi import FastAPI, APIRouter, UploadFile, File, Form, HTTPException, BackgroundTasks
+from fastapi.responses import StreamingResponse
 from dotenv import load_dotenv
 from starlette.middleware.cors import CORSMiddleware
 from motor.motor_asyncio import AsyncIOMotorClient
 import os
 import logging
+import asyncio
+import random
+import shutil
+import mimetypes
 from pathlib import Path
 from pydantic import BaseModel, Field, ConfigDict
-from typing import List
+from typing import Optional
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 
 
 ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / '.env')
 
-# MongoDB connection
+UPLOAD_DIR = ROOT_DIR / 'uploads'
+UPLOAD_DIR.mkdir(exist_ok=True)
+
+MAX_FILE_SIZE = 200 * 1024 * 1024  # 200 MB
+ALLOWED_EXPIRY_MIN = {10, 30, 60}
+ALLOWED_MAX_DOWNLOADS = {1, 3, 5, 10}
+
+# MongoDB
 mongo_url = os.environ['MONGO_URL']
 client = AsyncIOMotorClient(mongo_url)
 db = client[os.environ['DB_NAME']]
 
-# Create the main app without a prefix
-app = FastAPI()
-
-# Create a router with the /api prefix
+app = FastAPI(title="FlashDrop API")
 api_router = APIRouter(prefix="/api")
 
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+logger = logging.getLogger(__name__)
 
-# Define Models
-class StatusCheck(BaseModel):
-    model_config = ConfigDict(extra="ignore")  # Ignore MongoDB's _id field
-    
-    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
-    client_name: str
-    timestamp: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
-class StatusCheckCreate(BaseModel):
-    client_name: str
+# ---------- Models ----------
+class UploadResponse(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+    pin: str
+    file_id: str
+    filename: str
+    size: int
+    expiry_at: str
+    max_downloads: int
+    share_url: str
 
-# Add your routes to the router instead of directly to app
+
+class FileInfo(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+    pin: str
+    filename: str
+    size: int
+    content_type: str
+    expiry_at: str
+    max_downloads: int
+    download_count: int
+    remaining_downloads: int
+    expired: bool
+
+
+# ---------- Helpers ----------
+async def generate_unique_pin() -> str:
+    for _ in range(50):
+        pin = f"{random.randint(0, 999999):06d}"
+        exists = await db.flashdrops.find_one({"pin": pin, "active": True}, {"_id": 0, "pin": 1})
+        if not exists:
+            return pin
+    raise HTTPException(status_code=500, detail="Could not generate unique PIN")
+
+
+def is_expired(doc: dict) -> bool:
+    try:
+        expiry = datetime.fromisoformat(doc['expiry_at'])
+    except Exception:
+        return True
+    if expiry.tzinfo is None:
+        expiry = expiry.replace(tzinfo=timezone.utc)
+    return datetime.now(timezone.utc) >= expiry
+
+
+async def cleanup_file(doc: dict):
+    file_path = UPLOAD_DIR / doc['file_id']
+    try:
+        if file_path.exists():
+            file_path.unlink()
+    except Exception as e:
+        logger.warning(f"Failed to delete {file_path}: {e}")
+    await db.flashdrops.update_one({"pin": doc['pin']}, {"$set": {"active": False}})
+
+
+# ---------- Routes ----------
 @api_router.get("/")
 async def root():
-    return {"message": "Hello World"}
+    return {"service": "FlashDrop", "status": "ok"}
 
-@api_router.post("/status", response_model=StatusCheck)
-async def create_status_check(input: StatusCheckCreate):
-    status_dict = input.model_dump()
-    status_obj = StatusCheck(**status_dict)
-    
-    # Convert to dict and serialize datetime to ISO string for MongoDB
-    doc = status_obj.model_dump()
-    doc['timestamp'] = doc['timestamp'].isoformat()
-    
-    _ = await db.status_checks.insert_one(doc)
-    return status_obj
 
-@api_router.get("/status", response_model=List[StatusCheck])
-async def get_status_checks():
-    # Exclude MongoDB's _id field from the query results
-    status_checks = await db.status_checks.find({}, {"_id": 0}).to_list(1000)
-    
-    # Convert ISO string timestamps back to datetime objects
-    for check in status_checks:
-        if isinstance(check['timestamp'], str):
-            check['timestamp'] = datetime.fromisoformat(check['timestamp'])
-    
-    return status_checks
+@api_router.post("/upload", response_model=UploadResponse)
+async def upload_file(
+    file: UploadFile = File(...),
+    expiry_minutes: int = Form(30),
+    max_downloads: int = Form(3),
+):
+    if expiry_minutes not in ALLOWED_EXPIRY_MIN:
+        raise HTTPException(status_code=400, detail=f"expiry_minutes must be one of {sorted(ALLOWED_EXPIRY_MIN)}")
+    if max_downloads not in ALLOWED_MAX_DOWNLOADS:
+        raise HTTPException(status_code=400, detail=f"max_downloads must be one of {sorted(ALLOWED_MAX_DOWNLOADS)}")
 
-# Include the router in the main app
+    file_id = str(uuid.uuid4())
+    dest = UPLOAD_DIR / file_id
+    size = 0
+    try:
+        with dest.open("wb") as out:
+            while True:
+                chunk = await file.read(1024 * 1024)  # 1 MB chunks
+                if not chunk:
+                    break
+                size += len(chunk)
+                if size > MAX_FILE_SIZE:
+                    out.close()
+                    dest.unlink(missing_ok=True)
+                    raise HTTPException(status_code=413, detail="File exceeds 200MB limit")
+                out.write(chunk)
+    except HTTPException:
+        raise
+    except Exception as e:
+        dest.unlink(missing_ok=True)
+        logger.exception("Upload write failed")
+        raise HTTPException(status_code=500, detail=f"Upload failed: {e}")
+
+    pin = await generate_unique_pin()
+    now = datetime.now(timezone.utc)
+    expiry = now + timedelta(minutes=expiry_minutes)
+    content_type = file.content_type or mimetypes.guess_type(file.filename or "")[0] or "application/octet-stream"
+
+    doc = {
+        "pin": pin,
+        "file_id": file_id,
+        "filename": file.filename or "file",
+        "size": size,
+        "content_type": content_type,
+        "created_at": now.isoformat(),
+        "expiry_at": expiry.isoformat(),
+        "max_downloads": max_downloads,
+        "download_count": 0,
+        "last_downloaded_at": None,
+        "active": True,
+    }
+    await db.flashdrops.insert_one(doc)
+
+    share_url = f"/receive?pin={pin}"
+    return UploadResponse(
+        pin=pin,
+        file_id=file_id,
+        filename=doc['filename'],
+        size=size,
+        expiry_at=doc['expiry_at'],
+        max_downloads=max_downloads,
+        share_url=share_url,
+    )
+
+
+@api_router.get("/file/{pin}", response_model=FileInfo)
+async def get_file_info(pin: str):
+    if not (pin.isdigit() and len(pin) == 6):
+        raise HTTPException(status_code=400, detail="PIN must be 6 digits")
+
+    doc = await db.flashdrops.find_one({"pin": pin, "active": True}, {"_id": 0})
+    if not doc:
+        raise HTTPException(status_code=404, detail="File not found or expired")
+
+    expired = is_expired(doc) or doc['download_count'] >= doc['max_downloads']
+    if expired:
+        await cleanup_file(doc)
+        raise HTTPException(status_code=410, detail="File expired")
+
+    remaining = max(0, doc['max_downloads'] - doc['download_count'])
+    return FileInfo(
+        pin=doc['pin'],
+        filename=doc['filename'],
+        size=doc['size'],
+        content_type=doc['content_type'],
+        expiry_at=doc['expiry_at'],
+        max_downloads=doc['max_downloads'],
+        download_count=doc['download_count'],
+        remaining_downloads=remaining,
+        expired=False,
+    )
+
+
+@api_router.get("/download/{pin}")
+async def download_file(pin: str, background_tasks: BackgroundTasks):
+    if not (pin.isdigit() and len(pin) == 6):
+        raise HTTPException(status_code=400, detail="PIN must be 6 digits")
+
+    doc = await db.flashdrops.find_one_and_update(
+        {"pin": pin, "active": True, "download_count": {"$lt": 10_000}},
+        {"$inc": {"download_count": 1}, "$set": {"last_downloaded_at": datetime.now(timezone.utc).isoformat()}},
+        projection={"_id": 0},
+        return_document=True,
+    )
+    if not doc:
+        raise HTTPException(status_code=404, detail="File not found or expired")
+
+    if is_expired(doc) or doc['download_count'] > doc['max_downloads']:
+        background_tasks.add_task(cleanup_file_sync, doc)
+        raise HTTPException(status_code=410, detail="File expired")
+
+    file_path = UPLOAD_DIR / doc['file_id']
+    if not file_path.exists():
+        await db.flashdrops.update_one({"pin": pin}, {"$set": {"active": False}})
+        raise HTTPException(status_code=404, detail="File missing on disk")
+
+    # Schedule cleanup if this was the final download
+    if doc['download_count'] >= doc['max_downloads']:
+        background_tasks.add_task(cleanup_file_sync, doc)
+
+    def iter_file():
+        with file_path.open("rb") as f:
+            while True:
+                chunk = f.read(1024 * 1024)
+                if not chunk:
+                    break
+                yield chunk
+
+    headers = {
+        "Content-Disposition": f'attachment; filename="{doc["filename"]}"',
+        "Content-Length": str(doc['size']),
+        "X-FlashDrop-Downloads-Remaining": str(max(0, doc['max_downloads'] - doc['download_count'])),
+    }
+    return StreamingResponse(iter_file(), media_type=doc['content_type'], headers=headers)
+
+
+def cleanup_file_sync(doc: dict):
+    file_path = UPLOAD_DIR / doc['file_id']
+    try:
+        if file_path.exists():
+            file_path.unlink()
+    except Exception as e:
+        logger.warning(f"Failed deleting {file_path}: {e}")
+    # fire and forget
+    asyncio.create_task(db.flashdrops.update_one({"pin": doc['pin']}, {"$set": {"active": False}}))
+
+
+@api_router.delete("/file/{pin}")
+async def delete_file(pin: str):
+    doc = await db.flashdrops.find_one({"pin": pin, "active": True}, {"_id": 0})
+    if not doc:
+        raise HTTPException(status_code=404, detail="Not found")
+    await cleanup_file(doc)
+    return {"deleted": True}
+
+
+# ---------- Background cleanup ----------
+async def periodic_cleanup():
+    while True:
+        try:
+            now_iso = datetime.now(timezone.utc).isoformat()
+            cursor = db.flashdrops.find({"active": True, "expiry_at": {"$lte": now_iso}}, {"_id": 0})
+            async for doc in cursor:
+                await cleanup_file(doc)
+        except Exception as e:
+            logger.warning(f"Cleanup error: {e}")
+        await asyncio.sleep(60)
+
+
+@app.on_event("startup")
+async def on_startup():
+    await db.flashdrops.create_index("pin")
+    await db.flashdrops.create_index("expiry_at")
+    asyncio.create_task(periodic_cleanup())
+
+
 app.include_router(api_router)
 
 app.add_middleware(
@@ -77,12 +285,6 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Configure logging
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-)
-logger = logging.getLogger(__name__)
 
 @app.on_event("shutdown")
 async def shutdown_db_client():
