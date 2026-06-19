@@ -27,14 +27,17 @@ FlashDrop: modern instant file transport platform for urgent file sharing. Not c
 | DELETE | `/api/file/{pin}` | manual delete |
 
 ## What's Implemented — Feb 2026
-- ✅ Full upload/download flow with PIN, QR, copy buttons
-- ✅ Expiry + download-limit enforcement
+- ✅ **Multi-file bundles per PIN** (up to 20 files / 700MB total)
+- ✅ Single PIN, single QR, single share link for the whole bundle
+- ✅ "Download all as ZIP" + per-file individual downloads
+- ✅ Each download (ZIP or single) = 1 against the limit
+- ✅ Invalid file_id rejected with 404 **before** consuming a download slot
 - ✅ Auto-cleanup (background task + on-access)
-- ✅ Premium minimalist UI (Outfit + Geist fonts, indigo-600 PIN display)
-- ✅ Receive flow with `?pin=` deep link
+- ✅ Premium minimalist UI (Outfit + Geist, indigo-600 PIN display)
+- ✅ Receive flow with `?pin=` deep link + per-file download buttons
 - ✅ Download success screen with timestamp + device type
 - ✅ README with local-DB migration instructions
-- ✅ 100% test pass (backend pytest + frontend e2e)
+- ✅ 100% test pass on both iterations (13/13 backend, full frontend e2e)
 
 ## Prioritized Backlog
 ### P0

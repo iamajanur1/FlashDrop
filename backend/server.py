@@ -276,6 +276,14 @@ def _stream_path(path: Path):
 @api_router.get("/download/{pin}/{file_id}")
 async def download_single(pin: str, file_id: str, background_tasks: BackgroundTasks):
     _validate_pin(pin)
+    # Verify the file_id belongs to this drop BEFORE consuming a download slot.
+    existing = await db.flashdrops.find_one(
+        {"pin": pin, "active": True, "files.file_id": file_id},
+        {"_id": 0, "pin": 1},
+    )
+    if not existing:
+        raise HTTPException(status_code=404, detail="File not in this drop")
+
     doc = await _claim_download(pin)
     meta = next((f for f in doc.get("files", []) if f["file_id"] == file_id), None)
     if not meta:
