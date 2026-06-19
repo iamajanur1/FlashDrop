@@ -70,6 +70,12 @@ export default function SendFlow() {
     return <PinResult result={result} onReset={reset} />;
   }
 
+  const buttonLabel = uploading
+    ? "Uploading…"
+    : file
+      ? "Generate PIN"
+      : "Select a file to continue";
+
   return (
     <div className="space-y-8" data-testid="send-flow">
       {/* Dropzone */}
@@ -202,7 +208,7 @@ export default function SendFlow() {
         data-testid="generate-pin-btn"
         className="w-full h-12 bg-indigo-600 hover:bg-indigo-700 text-white font-semibold rounded-xl transition-all duration-200 active:scale-[0.98] disabled:opacity-50 disabled:cursor-not-allowed"
       >
-        {uploading ? "Uploading…" : file ? "Generate PIN" : "Select a file to continue"}
+        {buttonLabel}
       </Button>
     </div>
   );

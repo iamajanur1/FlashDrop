@@ -10,7 +10,7 @@ export default function FlashDrop({ defaultTab = "send" }) {
 
   useEffect(() => {
     if (searchParams.get("pin")) setTab("receive");
-  }, [searchParams]);
+  }, [searchParams, setTab]);
 
   return (
     <div className="fd-bg-orb min-h-screen bg-[#F9FAFB] flex flex-col items-center p-4 sm:p-8 relative">

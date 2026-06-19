@@ -6,7 +6,7 @@ from motor.motor_asyncio import AsyncIOMotorClient
 import os
 import logging
 import asyncio
-import random
+import secrets
 import shutil
 import mimetypes
 from pathlib import Path
@@ -66,20 +66,27 @@ class FileInfo(BaseModel):
 # ---------- Helpers ----------
 async def generate_unique_pin() -> str:
     for _ in range(50):
-        pin = f"{random.randint(0, 999999):06d}"
+        pin = f"{secrets.randbelow(1_000_000):06d}"
         exists = await db.flashdrops.find_one({"pin": pin, "active": True}, {"_id": 0, "pin": 1})
         if not exists:
             return pin
     raise HTTPException(status_code=500, detail="Could not generate unique PIN")
 
 
-def is_expired(doc: dict) -> bool:
+def _parse_expiry(doc: dict):
     try:
         expiry = datetime.fromisoformat(doc['expiry_at'])
-    except Exception:
-        return True
+    except (ValueError, KeyError, TypeError):
+        return None
     if expiry.tzinfo is None:
         expiry = expiry.replace(tzinfo=timezone.utc)
+    return expiry
+
+
+def is_expired(doc: dict) -> bool:
+    expiry = _parse_expiry(doc)
+    if expiry is None:
+        return True
     return datetime.now(timezone.utc) >= expiry
 
 

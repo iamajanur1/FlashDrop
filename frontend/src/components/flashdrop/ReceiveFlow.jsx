@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import axios from "axios";
 import { Download, FileIcon, CheckCircle2, RotateCcw, AlertCircle } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -15,14 +15,7 @@ export default function ReceiveFlow({ initialPin = "" }) {
   const [done, setDone] = useState(false);
   const [error, setError] = useState("");
 
-  useEffect(() => {
-    if (initialPin && initialPin.length === 6) {
-      void fetchInfo(initialPin);
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
-  const fetchInfo = async (value) => {
+  const fetchInfo = useCallback(async (value) => {
     setLoading(true);
     setError("");
     try {
@@ -35,7 +28,13 @@ export default function ReceiveFlow({ initialPin = "" }) {
     } finally {
       setLoading(false);
     }
-  };
+  }, []);
+
+  useEffect(() => {
+    if (initialPin && initialPin.length === 6) {
+      void fetchInfo(initialPin);
+    }
+  }, [initialPin, fetchInfo]);
 
   const handlePinChange = (value) => {
     setPin(value);
