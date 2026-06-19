@@ -1,7 +1,7 @@
 import { useRef, useState } from "react";
-import { UploadCloud, FileIcon, X } from "lucide-react";
+import { UploadCloud, FileIcon, X, Plus } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { uploadFile, formatSize } from "@/lib/flashdrop-api";
+import { uploadFiles, formatSize, MAX_BUNDLE_SIZE, MAX_FILES_PER_BUNDLE } from "@/lib/flashdrop-api";
 import { toast } from "sonner";
 import PinResult from "./PinResult";
 
@@ -11,10 +11,9 @@ const EXPIRY_OPTIONS = [
   { value: 60, label: "1 hour" },
 ];
 const LIMIT_OPTIONS = [1, 3, 5, 10];
-const MAX_SIZE = 200 * 1024 * 1024;
 
 export default function SendFlow() {
-  const [file, setFile] = useState(null);
+  const [files, setFiles] = useState([]);
   const [expiry, setExpiry] = useState(30);
   const [limit, setLimit] = useState(3);
   const [dragging, setDragging] = useState(false);
@@ -23,29 +22,50 @@ export default function SendFlow() {
   const [result, setResult] = useState(null);
   const inputRef = useRef(null);
 
-  const handleSelect = (f) => {
-    if (!f) return;
-    if (f.size > MAX_SIZE) {
-      toast.error("File too large. Max 200MB.");
+  const totalSize = files.reduce((s, f) => s + f.size, 0);
+
+  const addFiles = (incoming) => {
+    if (!incoming || incoming.length === 0) return;
+    const newOnes = Array.from(incoming);
+
+    // Deduplicate against current selection (name + size)
+    const existingKey = new Set(files.map((f) => `${f.name}|${f.size}`));
+    const filtered = newOnes.filter((f) => !existingKey.has(`${f.name}|${f.size}`));
+    if (filtered.length < newOnes.length) {
+      toast.info("Skipped duplicates");
+    }
+    if (filtered.length === 0) return;
+
+    const combined = [...files, ...filtered];
+    if (combined.length > MAX_FILES_PER_BUNDLE) {
+      toast.error(`Max ${MAX_FILES_PER_BUNDLE} files per drop`);
       return;
     }
-    setFile(f);
+    const newTotal = combined.reduce((s, f) => s + f.size, 0);
+    if (newTotal > MAX_BUNDLE_SIZE) {
+      toast.error(`Bundle exceeds 700MB total. Currently at ${formatSize(newTotal)}.`);
+      return;
+    }
+    setFiles(combined);
+  };
+
+  const removeFile = (idx) => {
+    setFiles((prev) => prev.filter((_, i) => i !== idx));
   };
 
   const onDrop = (e) => {
     e.preventDefault();
     setDragging(false);
-    const f = e.dataTransfer.files?.[0];
-    handleSelect(f);
+    addFiles(e.dataTransfer.files);
   };
 
   const handleUpload = async () => {
-    if (!file) return;
+    if (files.length === 0) return;
     setUploading(true);
     setProgress(0);
     try {
-      const data = await uploadFile({
-        file,
+      const data = await uploadFiles({
+        files,
         expiryMinutes: expiry,
         maxDownloads: limit,
         onProgress: ({ percent }) => setProgress(Math.round(percent * 100)),
@@ -61,25 +81,27 @@ export default function SendFlow() {
   };
 
   const reset = () => {
-    setFile(null);
+    setFiles([]);
     setResult(null);
     setProgress(0);
   };
+
+  let buttonLabel;
+  if (uploading) buttonLabel = "Uploading…";
+  else if (files.length === 0) buttonLabel = "Select files to continue";
+  else if (files.length === 1) buttonLabel = "Generate PIN";
+  else buttonLabel = `Generate PIN · ${files.length} files`;
 
   if (result) {
     return <PinResult result={result} onReset={reset} />;
   }
 
-  const buttonLabel = uploading
-    ? "Uploading…"
-    : file
-      ? "Generate PIN"
-      : "Select a file to continue";
+  const showDropzone = files.length === 0;
 
   return (
     <div className="space-y-8" data-testid="send-flow">
-      {/* Dropzone */}
-      {!file ? (
+      {/* Dropzone (empty state) */}
+      {showDropzone ? (
         <div
           onDragOver={(e) => {
             e.preventDefault();
@@ -99,43 +121,73 @@ export default function SendFlow() {
             <UploadCloud className="w-6 h-6 text-indigo-600" strokeWidth={1.8} />
           </div>
           <p className="font-display font-semibold text-lg text-gray-900 mb-1">
-            Drop your file here
+            Drop your files here
           </p>
-          <p className="text-sm text-gray-500">or click to browse · up to 200MB</p>
-          <input
-            ref={inputRef}
-            type="file"
-            className="hidden"
-            data-testid="file-input"
-            onChange={(e) => handleSelect(e.target.files?.[0])}
-          />
+          <p className="text-sm text-gray-500">
+            or click to browse · up to 700MB · max {MAX_FILES_PER_BUNDLE} files
+          </p>
         </div>
       ) : (
-        <div
-          className="border border-gray-200 rounded-2xl p-5 flex items-center gap-4 bg-gray-50/50"
-          data-testid="selected-file-card"
-        >
-          <div className="w-12 h-12 rounded-xl bg-indigo-50 flex items-center justify-center flex-shrink-0">
-            <FileIcon className="w-5 h-5 text-indigo-600" strokeWidth={1.8} />
-          </div>
-          <div className="flex-1 min-w-0">
-            <p className="font-medium text-gray-900 truncate" data-testid="selected-file-name">
-              {file.name}
+        <div className="space-y-3" data-testid="selected-files-list">
+          <div className="flex items-baseline justify-between px-1">
+            <p className="text-xs font-semibold text-gray-500 tracking-wider uppercase">
+              {files.length} {files.length === 1 ? "file" : "files"} selected
             </p>
-            <p className="text-sm text-gray-500">{formatSize(file.size)}</p>
+            <p className="text-xs text-gray-400 font-mono-pin">
+              {formatSize(totalSize)} / 700MB
+            </p>
           </div>
-          {!uploading && (
+          <div className="space-y-2 max-h-72 overflow-y-auto pr-1">
+            {files.map((f, idx) => (
+              <div
+                key={`${f.name}-${f.size}-${idx}`}
+                className="border border-gray-200 rounded-xl p-3 flex items-center gap-3 bg-gray-50/50"
+                data-testid={`selected-file-item-${idx}`}
+              >
+                <div className="w-9 h-9 rounded-lg bg-indigo-50 flex items-center justify-center flex-shrink-0">
+                  <FileIcon className="w-4 h-4 text-indigo-600" strokeWidth={1.8} />
+                </div>
+                <div className="flex-1 min-w-0">
+                  <p className="font-medium text-gray-900 text-sm truncate">{f.name}</p>
+                  <p className="text-xs text-gray-500">{formatSize(f.size)}</p>
+                </div>
+                {!uploading && (
+                  <button
+                    onClick={() => removeFile(idx)}
+                    className="w-7 h-7 rounded-lg hover:bg-gray-200 flex items-center justify-center transition-colors flex-shrink-0"
+                    data-testid={`remove-file-btn-${idx}`}
+                    aria-label="Remove file"
+                  >
+                    <X className="w-3.5 h-3.5 text-gray-500" />
+                  </button>
+                )}
+              </div>
+            ))}
+          </div>
+          {!uploading && files.length < MAX_FILES_PER_BUNDLE && (
             <button
-              onClick={reset}
-              className="w-8 h-8 rounded-lg hover:bg-gray-200 flex items-center justify-center transition-colors"
-              data-testid="remove-file-btn"
-              aria-label="Remove file"
+              onClick={() => inputRef.current?.click()}
+              className="w-full py-2.5 rounded-xl border border-dashed border-gray-300 text-sm font-medium text-gray-600 hover:border-indigo-400 hover:text-indigo-600 transition-colors flex items-center justify-center gap-2"
+              data-testid="add-more-files-btn"
             >
-              <X className="w-4 h-4 text-gray-500" />
+              <Plus className="w-4 h-4" /> Add more files
             </button>
           )}
         </div>
       )}
+
+      <input
+        ref={inputRef}
+        type="file"
+        multiple
+        className="hidden"
+        data-testid="file-input"
+        onChange={(e) => {
+          addFiles(e.target.files);
+          // reset the input so the same file can be re-selected after removal
+          e.target.value = "";
+        }}
+      />
 
       {/* Settings */}
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-5">
@@ -204,7 +256,7 @@ export default function SendFlow() {
       {/* Submit */}
       <Button
         onClick={handleUpload}
-        disabled={!file || uploading}
+        disabled={files.length === 0 || uploading}
         data-testid="generate-pin-btn"
         className="w-full h-12 bg-indigo-600 hover:bg-indigo-700 text-white font-semibold rounded-xl transition-all duration-200 active:scale-[0.98] disabled:opacity-50 disabled:cursor-not-allowed"
       >

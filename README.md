@@ -7,23 +7,28 @@ Temporary. Secure. No login. Cloud Mode MVP.
 - **Frontend:** React 19 + Tailwind + shadcn/ui
 - **Backend:** FastAPI (Python) + MongoDB
 - **Storage:** Local disk (`backend/uploads/`)
-- **Max file size:** 200MB
+- **Max bundle size:** 700 MB total
+- **Max files per drop:** 20
 
 ## Features
-- 6-digit PIN + shareable link + QR code
+- Multi-file drops bundled under a single 6-digit PIN
+- Shareable link + QR code
+- "Download all as ZIP" for multi-file drops, or single-file streaming
+- Per-file individual download buttons for receivers
 - Expiry choices: 10 min / 30 min / 1 hour
-- Download limits: 1 / 3 / 5 / 10
+- Download limits: 1 / 3 / 5 / 10 (each ZIP or single file = 1 against the limit)
 - Auto-cleanup on expiry or when limit is hit
 
 ## API
 
 All routes are prefixed with `/api`.
 
-| Method | Path | Body | Returns |
+| Method | Path | Body / Params | Returns |
 |---|---|---|---|
-| POST | `/api/upload` | multipart: `file`, `expiry_minutes` (10/30/60), `max_downloads` (1/3/5/10) | `{ pin, file_id, filename, size, expiry_at, max_downloads, share_url }` |
-| GET | `/api/file/{pin}` | — | File metadata |
-| GET | `/api/download/{pin}` | — | File stream (attachment) |
+| POST | `/api/upload` | multipart: `files` (repeat for each file), `expiry_minutes` (10/30/60), `max_downloads` (1/3/5/10) | `{ pin, files[], total_size, file_count, expiry_at, max_downloads, share_url }` |
+| GET | `/api/file/{pin}` | — | Bundle metadata + per-file list |
+| GET | `/api/download/{pin}` | — | ZIP of all files (or single file if only 1). Counts as 1 download. |
+| GET | `/api/download/{pin}/{file_id}` | — | Single file stream. Counts as 1 download. |
 | DELETE | `/api/file/{pin}` | — | `{ deleted: true }` |
 
 ---
@@ -72,12 +77,14 @@ Open `http://localhost:3000` → upload → share the PIN.
 
 ### 5. Tweaks you can make
 All in `backend/server.py` near the top:
-- `MAX_FILE_SIZE` – bump beyond 200MB
+- `MAX_BUNDLE_SIZE` – bump beyond 700MB (total bytes across all files in one drop)
+- `MAX_FILES_PER_BUNDLE` – allow more than 20 files per drop
 - `ALLOWED_EXPIRY_MIN` – add/remove expiry presets
 - `ALLOWED_MAX_DOWNLOADS` – change download limit presets
 
-And in `frontend/src/components/flashdrop/SendFlow.jsx`:
-- `EXPIRY_OPTIONS`, `LIMIT_OPTIONS` – keep UI in sync with backend allowlists.
+And in the frontend:
+- `MAX_BUNDLE_SIZE` / `MAX_FILES_PER_BUNDLE` in `frontend/src/lib/flashdrop-api.js`
+- `EXPIRY_OPTIONS`, `LIMIT_OPTIONS` in `frontend/src/components/flashdrop/SendFlow.jsx` – keep UI in sync with backend allowlists.
 
 ### 6. MongoDB collection
 Only one collection is used: **`flashdrops`**. Indexes are created automatically on startup (`pin`, `expiry_at`).

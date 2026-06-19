@@ -1,16 +1,35 @@
 import { useCallback, useEffect, useState } from "react";
 import axios from "axios";
-import { Download, FileIcon, CheckCircle2, RotateCcw, AlertCircle } from "lucide-react";
+import {
+  Download,
+  FileIcon,
+  Files,
+  CheckCircle2,
+  RotateCcw,
+  AlertCircle,
+  Package,
+} from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { InputOTP, InputOTPGroup, InputOTPSlot, InputOTPSeparator } from "@/components/ui/input-otp";
-import { API, downloadUrl, formatSize, timeUntil } from "@/lib/flashdrop-api";
+import {
+  InputOTP,
+  InputOTPGroup,
+  InputOTPSlot,
+  InputOTPSeparator,
+} from "@/components/ui/input-otp";
+import {
+  API,
+  downloadAllUrl,
+  downloadSingleUrl,
+  formatSize,
+  timeUntil,
+} from "@/lib/flashdrop-api";
 import { toast } from "sonner";
 
 export default function ReceiveFlow({ initialPin = "" }) {
   const [pin, setPin] = useState(initialPin.replace(/\D/g, "").slice(0, 6));
   const [info, setInfo] = useState(null);
   const [loading, setLoading] = useState(false);
-  const [downloading, setDownloading] = useState(false);
+  const [busyKey, setBusyKey] = useState(null); // null | "all" | file_id
   const [progress, setProgress] = useState(0);
   const [done, setDone] = useState(false);
   const [error, setError] = useState("");
@@ -46,36 +65,58 @@ export default function ReceiveFlow({ initialPin = "" }) {
     }
   };
 
-  const handleDownload = async () => {
-    if (!info) return;
-    setDownloading(true);
+  const triggerDownload = async ({ url, fallbackName, fallbackType, key, expectedSize }) => {
+    setBusyKey(key);
     setProgress(0);
     try {
-      const res = await axios.get(downloadUrl(pin), {
+      const res = await axios.get(url, {
         responseType: "blob",
         onDownloadProgress: (e) => {
-          const total = e.total || info.size;
+          const total = e.total || expectedSize || 0;
           const loaded = e.loaded || 0;
           setProgress(total ? Math.round((loaded / total) * 100) : 0);
         },
       });
-      const blob = new Blob([res.data], { type: info.content_type });
-      const url = window.URL.createObjectURL(blob);
+      const blob = new Blob([res.data], { type: fallbackType || "application/octet-stream" });
+      const objectUrl = window.URL.createObjectURL(blob);
       const a = document.createElement("a");
-      a.href = url;
-      a.download = info.filename;
+      a.href = objectUrl;
+      a.download = fallbackName;
       document.body.appendChild(a);
       a.click();
       a.remove();
-      window.URL.revokeObjectURL(url);
+      window.URL.revokeObjectURL(objectUrl);
       setDone(true);
       toast.success("Download complete");
     } catch (err) {
       const msg = err?.response?.data?.detail || err.message || "Download failed";
       toast.error(typeof msg === "string" ? msg : "Download failed");
     } finally {
-      setDownloading(false);
+      setBusyKey(null);
     }
+  };
+
+  const handleDownloadAll = () => {
+    if (!info) return;
+    const isSingle = info.file_count === 1;
+    const file = info.files?.[0];
+    triggerDownload({
+      url: downloadAllUrl(pin),
+      fallbackName: isSingle ? file?.filename || "file" : `flashdrop-${pin}.zip`,
+      fallbackType: isSingle ? file?.content_type : "application/zip",
+      key: "all",
+      expectedSize: info.total_size,
+    });
+  };
+
+  const handleDownloadSingle = (file) => {
+    triggerDownload({
+      url: downloadSingleUrl(pin, file.file_id),
+      fallbackName: file.filename,
+      fallbackType: file.content_type,
+      key: file.file_id,
+      expectedSize: file.size,
+    });
   };
 
   const reset = () => {
@@ -93,12 +134,17 @@ export default function ReceiveFlow({ initialPin = "" }) {
           <CheckCircle2 className="w-8 h-8 text-emerald-500" strokeWidth={2} />
         </div>
         <div>
-          <h2 className="font-display font-semibold text-2xl text-gray-900">Downloaded successfully</h2>
+          <h2 className="font-display font-semibold text-2xl text-gray-900">
+            Downloaded successfully
+          </h2>
           <p className="mt-2 text-sm text-gray-500">
-            {info?.filename} · {formatSize(info?.size)}
+            {info?.file_count === 1
+              ? `${info?.files?.[0]?.filename} · ${formatSize(info?.files?.[0]?.size)}`
+              : `${info?.file_count} files · ${formatSize(info?.total_size)}`}
           </p>
           <p className="mt-1 text-xs text-gray-400">
-            {new Date().toLocaleString()} · {navigator.userAgent.includes("Mobile") ? "Mobile" : "Desktop"}
+            {new Date().toLocaleString()} ·{" "}
+            {navigator.userAgent.includes("Mobile") ? "Mobile" : "Desktop"}
           </p>
         </div>
         <Button
@@ -112,6 +158,9 @@ export default function ReceiveFlow({ initialPin = "" }) {
       </div>
     );
   }
+
+  const downloading = busyKey !== null;
+  const isMulti = (info?.file_count ?? 1) > 1;
 
   return (
     <div className="space-y-8" data-testid="receive-flow">
@@ -150,24 +199,61 @@ export default function ReceiveFlow({ initialPin = "" }) {
         )}
       </div>
 
-      {/* File info */}
+      {/* Bundle info */}
       {info && (
         <div className="fd-fade-up space-y-5">
+          {/* Bundle summary header */}
           <div
             className="border border-gray-200 rounded-2xl p-5 flex items-center gap-4 bg-gray-50/50"
-            data-testid="received-file-card"
+            data-testid="received-bundle-card"
           >
             <div className="w-12 h-12 rounded-xl bg-indigo-50 flex items-center justify-center flex-shrink-0">
-              <FileIcon className="w-5 h-5 text-indigo-600" strokeWidth={1.8} />
+              {isMulti ? (
+                <Files className="w-5 h-5 text-indigo-600" />
+              ) : (
+                <FileIcon className="w-5 h-5 text-indigo-600" />
+              )}
             </div>
             <div className="flex-1 min-w-0">
-              <p className="font-medium text-gray-900 truncate" data-testid="received-file-name">
-                {info.filename}
+              <p className="font-medium text-gray-900 truncate" data-testid="received-bundle-title">
+                {isMulti ? `${info.file_count} files` : info.files?.[0]?.filename}
               </p>
-              <p className="text-sm text-gray-500">{formatSize(info.size)}</p>
+              <p className="text-sm text-gray-500">{formatSize(info.total_size)}</p>
             </div>
           </div>
 
+          {/* Per-file list (only show for multi-file) */}
+          {isMulti && (
+            <div className="space-y-2 max-h-72 overflow-y-auto pr-1" data-testid="received-files-list">
+              {info.files.map((f) => {
+                const busy = busyKey === f.file_id;
+                return (
+                  <div
+                    key={f.file_id}
+                    className="border border-gray-100 rounded-xl p-3 flex items-center gap-3 hover:border-indigo-200 transition-colors"
+                    data-testid={`received-file-row-${f.file_id}`}
+                  >
+                    <FileIcon className="w-4 h-4 text-gray-400 flex-shrink-0" strokeWidth={1.8} />
+                    <div className="flex-1 min-w-0">
+                      <p className="font-medium text-sm text-gray-900 truncate">{f.filename}</p>
+                      <p className="text-xs text-gray-500">{formatSize(f.size)}</p>
+                    </div>
+                    <button
+                      onClick={() => handleDownloadSingle(f)}
+                      disabled={downloading}
+                      data-testid={`download-single-btn-${f.file_id}`}
+                      className="px-3 py-1.5 text-xs font-medium text-indigo-600 hover:bg-indigo-50 rounded-lg transition-colors disabled:opacity-40 disabled:cursor-not-allowed flex items-center gap-1"
+                    >
+                      <Download className="w-3 h-3" />
+                      {busy ? `${progress}%` : "Get"}
+                    </button>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+
+          {/* Meta */}
           <div className="grid grid-cols-2 gap-3 text-center">
             <div className="p-3 bg-gray-50 rounded-xl">
               <p className="text-xs text-gray-500 mb-0.5">Expires in</p>
@@ -183,6 +269,7 @@ export default function ReceiveFlow({ initialPin = "" }) {
             </div>
           </div>
 
+          {/* Progress (only show during downloads) */}
           {downloading && (
             <div className="space-y-2" data-testid="download-progress">
               <div className="flex justify-between text-sm">
@@ -199,14 +286,28 @@ export default function ReceiveFlow({ initialPin = "" }) {
           )}
 
           <Button
-            onClick={handleDownload}
+            onClick={handleDownloadAll}
             disabled={downloading}
             data-testid="download-file-btn"
             className="w-full h-12 bg-indigo-600 hover:bg-indigo-700 text-white font-semibold rounded-xl transition-all duration-200 active:scale-[0.98] disabled:opacity-50"
           >
-            <Download className="w-4 h-4 mr-2" />
-            {downloading ? "Downloading…" : "Download file"}
+            {isMulti ? (
+              <Package className="w-4 h-4 mr-2" />
+            ) : (
+              <Download className="w-4 h-4 mr-2" />
+            )}
+            {busyKey === "all"
+              ? "Downloading…"
+              : isMulti
+                ? `Download all as ZIP · ${formatSize(info.total_size)}`
+                : "Download file"}
           </Button>
+
+          {isMulti && (
+            <p className="text-xs text-gray-400 text-center -mt-3">
+              Each download (ZIP or individual) counts as 1 against the limit.
+            </p>
+          )}
         </div>
       )}
     </div>

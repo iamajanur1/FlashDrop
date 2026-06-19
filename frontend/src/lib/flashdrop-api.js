@@ -3,6 +3,9 @@ import axios from "axios";
 const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
 export const API = `${BACKEND_URL}/api`;
 
+export const MAX_BUNDLE_SIZE = 700 * 1024 * 1024; // 700 MB
+export const MAX_FILES_PER_BUNDLE = 20;
+
 export function formatSize(bytes) {
   if (!bytes && bytes !== 0) return "—";
   const units = ["B", "KB", "MB", "GB"];
@@ -15,15 +18,6 @@ export function formatSize(bytes) {
   return `${n.toFixed(n < 10 && i > 0 ? 1 : 0)} ${units[i]}`;
 }
 
-export function formatDuration(ms) {
-  if (ms <= 0 || !isFinite(ms)) return "0s";
-  const s = Math.round(ms / 1000);
-  if (s < 60) return `${s}s`;
-  const m = Math.floor(s / 60);
-  const r = s % 60;
-  return `${m}m ${r}s`;
-}
-
 export function timeUntil(isoString) {
   const target = new Date(isoString).getTime();
   const diff = target - Date.now();
@@ -34,29 +28,34 @@ export function timeUntil(isoString) {
   return `${mins}m ${secs.toString().padStart(2, "0")}s`;
 }
 
-export async function uploadFile({ file, expiryMinutes, maxDownloads, onProgress }) {
+export async function uploadFiles({ files, expiryMinutes, maxDownloads, onProgress }) {
   const form = new FormData();
-  form.append("file", file);
+  files.forEach((f) => form.append("files", f, f.name));
   form.append("expiry_minutes", String(expiryMinutes));
   form.append("max_downloads", String(maxDownloads));
 
+  const total = files.reduce((s, f) => s + f.size, 0);
   const res = await axios.post(`${API}/upload`, form, {
     headers: { "Content-Type": "multipart/form-data" },
     onUploadProgress: (e) => {
       if (!onProgress) return;
-      const total = e.total || file.size;
+      const totalBytes = e.total || total;
       const loaded = e.loaded || 0;
-      onProgress({ loaded, total, percent: total ? loaded / total : 0 });
+      onProgress({ loaded, total: totalBytes, percent: totalBytes ? loaded / totalBytes : 0 });
     },
   });
   return res.data;
 }
 
-export async function getFileInfo(pin) {
+export async function getBundleInfo(pin) {
   const res = await axios.get(`${API}/file/${pin}`);
   return res.data;
 }
 
-export function downloadUrl(pin) {
+export function downloadAllUrl(pin) {
   return `${API}/download/${pin}`;
+}
+
+export function downloadSingleUrl(pin, fileId) {
+  return `${API}/download/${pin}/${fileId}`;
 }

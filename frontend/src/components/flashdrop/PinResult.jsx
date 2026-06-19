@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { QRCodeSVG } from "qrcode.react";
-import { Copy, Check, RotateCcw, Clock, Download, FileIcon } from "lucide-react";
+import { Copy, Check, RotateCcw, Clock, Download, FileIcon, Files } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { formatSize, timeUntil } from "@/lib/flashdrop-api";
 import { toast } from "sonner";
@@ -8,7 +8,7 @@ import { toast } from "sonner";
 export default function PinResult({ result, onReset }) {
   const [copiedPin, setCopiedPin] = useState(false);
   const [copiedLink, setCopiedLink] = useState(false);
-  const [tick, setTick] = useState(0);
+  const [, setTick] = useState(0);
 
   useEffect(() => {
     const id = setInterval(() => setTick((t) => t + 1), 1000);
@@ -16,6 +16,10 @@ export default function PinResult({ result, onReset }) {
   }, []);
 
   const shareUrl = `${window.location.origin}/receive?pin=${result.pin}`;
+  const fileCount = result.file_count ?? result.files?.length ?? 1;
+  const firstName = result.files?.[0]?.filename;
+  const summary =
+    fileCount === 1 ? firstName : `${fileCount} files`;
 
   const copyPin = async () => {
     await navigator.clipboard.writeText(result.pin);
@@ -35,16 +39,23 @@ export default function PinResult({ result, onReset }) {
 
   return (
     <div className="fd-fade-up space-y-8" data-testid="pin-result">
-      {/* File info */}
+      {/* Bundle summary */}
       <div className="flex items-center gap-3 justify-center">
         <div className="w-10 h-10 rounded-xl bg-indigo-50 flex items-center justify-center">
-          <FileIcon className="w-4 h-4 text-indigo-600" />
+          {fileCount > 1 ? (
+            <Files className="w-4 h-4 text-indigo-600" />
+          ) : (
+            <FileIcon className="w-4 h-4 text-indigo-600" />
+          )}
         </div>
         <div>
-          <p className="font-medium text-gray-900 text-sm truncate max-w-[240px] sm:max-w-[360px]">
-            {result.filename}
+          <p
+            className="font-medium text-gray-900 text-sm truncate max-w-[240px] sm:max-w-[360px]"
+            data-testid="bundle-summary"
+          >
+            {summary}
           </p>
-          <p className="text-xs text-gray-500">{formatSize(result.size)}</p>
+          <p className="text-xs text-gray-500">{formatSize(result.total_size)}</p>
         </div>
       </div>
 
@@ -124,7 +135,7 @@ export default function PinResult({ result, onReset }) {
         className="w-full h-11 rounded-xl border-gray-200 hover:border-indigo-300 hover:text-indigo-600"
       >
         <RotateCcw className="w-4 h-4 mr-2" />
-        Send another file
+        Send another drop
       </Button>
     </div>
   );

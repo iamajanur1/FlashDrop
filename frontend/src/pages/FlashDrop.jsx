@@ -83,7 +83,7 @@ export default function FlashDrop({ defaultTab = "send" }) {
 
         {/* Footer */}
         <footer className="mt-10 text-center text-xs text-gray-400 pb-6">
-          <p>Files auto-delete after expiry or max downloads · Max 200MB</p>
+          <p>Files auto-delete after expiry or max downloads · Max 700MB total · Up to 20 files</p>
         </footer>
       </main>
     </div>

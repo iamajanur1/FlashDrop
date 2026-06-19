@@ -7,11 +7,12 @@ import os
 import logging
 import asyncio
 import secrets
-import shutil
+import zipfile
+import tempfile
 import mimetypes
 from pathlib import Path
 from pydantic import BaseModel, Field, ConfigDict
-from typing import Optional
+from typing import List, Optional
 import uuid
 from datetime import datetime, timezone, timedelta
 
@@ -22,7 +23,9 @@ load_dotenv(ROOT_DIR / '.env')
 UPLOAD_DIR = ROOT_DIR / 'uploads'
 UPLOAD_DIR.mkdir(exist_ok=True)
 
-MAX_FILE_SIZE = 200 * 1024 * 1024  # 200 MB
+# Limits
+MAX_BUNDLE_SIZE = 700 * 1024 * 1024  # 700 MB total per drop
+MAX_FILES_PER_BUNDLE = 20
 ALLOWED_EXPIRY_MIN = {10, 30, 60}
 ALLOWED_MAX_DOWNLOADS = {1, 3, 5, 10}
 
@@ -39,23 +42,31 @@ logger = logging.getLogger(__name__)
 
 
 # ---------- Models ----------
-class UploadResponse(BaseModel):
+class BundleFile(BaseModel):
     model_config = ConfigDict(extra="ignore")
-    pin: str
     file_id: str
     filename: str
     size: int
+    content_type: str
+
+
+class UploadResponse(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+    pin: str
+    files: List[BundleFile]
+    total_size: int
+    file_count: int
     expiry_at: str
     max_downloads: int
     share_url: str
 
 
-class FileInfo(BaseModel):
+class BundleInfo(BaseModel):
     model_config = ConfigDict(extra="ignore")
     pin: str
-    filename: str
-    size: int
-    content_type: str
+    files: List[BundleFile]
+    total_size: int
+    file_count: int
     expiry_at: str
     max_downloads: int
     download_count: int
@@ -73,7 +84,7 @@ async def generate_unique_pin() -> str:
     raise HTTPException(status_code=500, detail="Could not generate unique PIN")
 
 
-def _parse_expiry(doc: dict):
+def _parse_expiry(doc: dict) -> Optional[datetime]:
     try:
         expiry = datetime.fromisoformat(doc['expiry_at'])
     except (ValueError, KeyError, TypeError):
@@ -90,13 +101,18 @@ def is_expired(doc: dict) -> bool:
     return datetime.now(timezone.utc) >= expiry
 
 
-async def cleanup_file(doc: dict):
-    file_path = UPLOAD_DIR / doc['file_id']
-    try:
-        if file_path.exists():
-            file_path.unlink()
-    except Exception as e:
-        logger.warning(f"Failed to delete {file_path}: {e}")
+def _delete_bundle_files(doc: dict):
+    for f in doc.get("files", []):
+        p = UPLOAD_DIR / f["file_id"]
+        try:
+            if p.exists():
+                p.unlink()
+        except Exception as e:
+            logger.warning(f"Failed to delete {p}: {e}")
+
+
+async def cleanup_bundle(doc: dict):
+    _delete_bundle_files(doc)
     await db.flashdrops.update_one({"pin": doc['pin']}, {"$set": {"active": False}})
 
 
@@ -106,31 +122,25 @@ async def root():
     return {"service": "FlashDrop", "status": "ok"}
 
 
-@api_router.post("/upload", response_model=UploadResponse)
-async def upload_file(
-    file: UploadFile = File(...),
-    expiry_minutes: int = Form(30),
-    max_downloads: int = Form(3),
-):
-    if expiry_minutes not in ALLOWED_EXPIRY_MIN:
-        raise HTTPException(status_code=400, detail=f"expiry_minutes must be one of {sorted(ALLOWED_EXPIRY_MIN)}")
-    if max_downloads not in ALLOWED_MAX_DOWNLOADS:
-        raise HTTPException(status_code=400, detail=f"max_downloads must be one of {sorted(ALLOWED_MAX_DOWNLOADS)}")
-
+async def _save_upload(upload: UploadFile, remaining_budget: int) -> tuple[str, int]:
+    """Stream a single UploadFile to disk under remaining_budget. Returns (file_id, size)."""
     file_id = str(uuid.uuid4())
     dest = UPLOAD_DIR / file_id
     size = 0
     try:
         with dest.open("wb") as out:
             while True:
-                chunk = await file.read(1024 * 1024)  # 1 MB chunks
+                chunk = await upload.read(1024 * 1024)
                 if not chunk:
                     break
                 size += len(chunk)
-                if size > MAX_FILE_SIZE:
+                if size > remaining_budget:
                     out.close()
                     dest.unlink(missing_ok=True)
-                    raise HTTPException(status_code=413, detail="File exceeds 200MB limit")
+                    raise HTTPException(
+                        status_code=413,
+                        detail=f"Bundle exceeds {MAX_BUNDLE_SIZE // (1024 * 1024)}MB total limit",
+                    )
                 out.write(chunk)
     except HTTPException:
         raise
@@ -138,18 +148,56 @@ async def upload_file(
         dest.unlink(missing_ok=True)
         logger.exception("Upload write failed")
         raise HTTPException(status_code=500, detail=f"Upload failed: {e}")
+    return file_id, size
+
+
+@api_router.post("/upload", response_model=UploadResponse)
+async def upload_bundle(
+    files: List[UploadFile] = File(...),
+    expiry_minutes: int = Form(30),
+    max_downloads: int = Form(3),
+):
+    if expiry_minutes not in ALLOWED_EXPIRY_MIN:
+        raise HTTPException(status_code=400, detail=f"expiry_minutes must be one of {sorted(ALLOWED_EXPIRY_MIN)}")
+    if max_downloads not in ALLOWED_MAX_DOWNLOADS:
+        raise HTTPException(status_code=400, detail=f"max_downloads must be one of {sorted(ALLOWED_MAX_DOWNLOADS)}")
+    if not files:
+        raise HTTPException(status_code=400, detail="No files uploaded")
+    if len(files) > MAX_FILES_PER_BUNDLE:
+        raise HTTPException(status_code=400, detail=f"Max {MAX_FILES_PER_BUNDLE} files per drop")
+
+    saved: List[BundleFile] = []
+    total_size = 0
+    try:
+        for upload in files:
+            remaining = MAX_BUNDLE_SIZE - total_size
+            file_id, size = await _save_upload(upload, remaining)
+            total_size += size
+            content_type = (
+                upload.content_type
+                or mimetypes.guess_type(upload.filename or "")[0]
+                or "application/octet-stream"
+            )
+            saved.append(BundleFile(
+                file_id=file_id,
+                filename=upload.filename or "file",
+                size=size,
+                content_type=content_type,
+            ))
+    except HTTPException:
+        # rollback any saved files
+        for f in saved:
+            (UPLOAD_DIR / f.file_id).unlink(missing_ok=True)
+        raise
 
     pin = await generate_unique_pin()
     now = datetime.now(timezone.utc)
     expiry = now + timedelta(minutes=expiry_minutes)
-    content_type = file.content_type or mimetypes.guess_type(file.filename or "")[0] or "application/octet-stream"
 
     doc = {
         "pin": pin,
-        "file_id": file_id,
-        "filename": file.filename or "file",
-        "size": size,
-        "content_type": content_type,
+        "files": [f.model_dump() for f in saved],
+        "total_size": total_size,
         "created_at": now.isoformat(),
         "expiry_at": expiry.isoformat(),
         "max_downloads": max_downloads,
@@ -159,106 +207,177 @@ async def upload_file(
     }
     await db.flashdrops.insert_one(doc)
 
-    share_url = f"/receive?pin={pin}"
     return UploadResponse(
         pin=pin,
-        file_id=file_id,
-        filename=doc['filename'],
-        size=size,
+        files=saved,
+        total_size=total_size,
+        file_count=len(saved),
         expiry_at=doc['expiry_at'],
         max_downloads=max_downloads,
-        share_url=share_url,
+        share_url=f"/receive?pin={pin}",
     )
 
 
-@api_router.get("/file/{pin}", response_model=FileInfo)
-async def get_file_info(pin: str):
+def _validate_pin(pin: str):
     if not (pin.isdigit() and len(pin) == 6):
         raise HTTPException(status_code=400, detail="PIN must be 6 digits")
 
+
+@api_router.get("/file/{pin}", response_model=BundleInfo)
+async def get_bundle_info(pin: str):
+    _validate_pin(pin)
     doc = await db.flashdrops.find_one({"pin": pin, "active": True}, {"_id": 0})
     if not doc:
         raise HTTPException(status_code=404, detail="File not found or expired")
-
-    expired = is_expired(doc) or doc['download_count'] >= doc['max_downloads']
-    if expired:
-        await cleanup_file(doc)
+    if is_expired(doc) or doc['download_count'] >= doc['max_downloads']:
+        await cleanup_bundle(doc)
         raise HTTPException(status_code=410, detail="File expired")
 
-    remaining = max(0, doc['max_downloads'] - doc['download_count'])
-    return FileInfo(
+    files = [BundleFile(**f) for f in doc.get("files", [])]
+    return BundleInfo(
         pin=doc['pin'],
-        filename=doc['filename'],
-        size=doc['size'],
-        content_type=doc['content_type'],
+        files=files,
+        total_size=doc['total_size'],
+        file_count=len(files),
         expiry_at=doc['expiry_at'],
         max_downloads=doc['max_downloads'],
         download_count=doc['download_count'],
-        remaining_downloads=remaining,
+        remaining_downloads=max(0, doc['max_downloads'] - doc['download_count']),
         expired=False,
     )
 
 
-@api_router.get("/download/{pin}")
-async def download_file(pin: str, background_tasks: BackgroundTasks):
-    if not (pin.isdigit() and len(pin) == 6):
-        raise HTTPException(status_code=400, detail="PIN must be 6 digits")
-
+async def _claim_download(pin: str) -> dict:
+    """Atomically increment download_count if drop is still active. Returns the post-update doc."""
     doc = await db.flashdrops.find_one_and_update(
-        {"pin": pin, "active": True, "download_count": {"$lt": 10_000}},
-        {"$inc": {"download_count": 1}, "$set": {"last_downloaded_at": datetime.now(timezone.utc).isoformat()}},
+        {"pin": pin, "active": True},
+        {"$inc": {"download_count": 1},
+         "$set": {"last_downloaded_at": datetime.now(timezone.utc).isoformat()}},
         projection={"_id": 0},
         return_document=True,
     )
     if not doc:
         raise HTTPException(status_code=404, detail="File not found or expired")
-
     if is_expired(doc) or doc['download_count'] > doc['max_downloads']:
-        background_tasks.add_task(cleanup_file_sync, doc)
+        await cleanup_bundle(doc)
         raise HTTPException(status_code=410, detail="File expired")
+    return doc
 
-    file_path = UPLOAD_DIR / doc['file_id']
-    if not file_path.exists():
+
+def _stream_path(path: Path):
+    with path.open("rb") as f:
+        while True:
+            chunk = f.read(1024 * 1024)
+            if not chunk:
+                break
+            yield chunk
+
+
+@api_router.get("/download/{pin}/{file_id}")
+async def download_single(pin: str, file_id: str, background_tasks: BackgroundTasks):
+    _validate_pin(pin)
+    doc = await _claim_download(pin)
+    meta = next((f for f in doc.get("files", []) if f["file_id"] == file_id), None)
+    if not meta:
+        raise HTTPException(status_code=404, detail="File not in this drop")
+    path = UPLOAD_DIR / file_id
+    if not path.exists():
         await db.flashdrops.update_one({"pin": pin}, {"$set": {"active": False}})
         raise HTTPException(status_code=404, detail="File missing on disk")
 
-    # Schedule cleanup if this was the final download
     if doc['download_count'] >= doc['max_downloads']:
-        background_tasks.add_task(cleanup_file_sync, doc)
-
-    def iter_file():
-        with file_path.open("rb") as f:
-            while True:
-                chunk = f.read(1024 * 1024)
-                if not chunk:
-                    break
-                yield chunk
+        background_tasks.add_task(_cleanup_bundle_sync, doc)
 
     headers = {
-        "Content-Disposition": f'attachment; filename="{doc["filename"]}"',
-        "Content-Length": str(doc['size']),
+        "Content-Disposition": f'attachment; filename="{meta["filename"]}"',
+        "Content-Length": str(meta["size"]),
         "X-FlashDrop-Downloads-Remaining": str(max(0, doc['max_downloads'] - doc['download_count'])),
     }
-    return StreamingResponse(iter_file(), media_type=doc['content_type'], headers=headers)
+    return StreamingResponse(_stream_path(path), media_type=meta["content_type"], headers=headers)
 
 
-def cleanup_file_sync(doc: dict):
-    file_path = UPLOAD_DIR / doc['file_id']
+def _build_bundle_zip(doc: dict) -> Path:
+    tmp = tempfile.NamedTemporaryFile(prefix="fd_zip_", suffix=".zip", delete=False)
+    tmp.close()
+    zpath = Path(tmp.name)
+    with zipfile.ZipFile(zpath, "w", compression=zipfile.ZIP_STORED, allowZip64=True) as zf:
+        used_names = set()
+        for f in doc.get("files", []):
+            src = UPLOAD_DIR / f["file_id"]
+            if not src.exists():
+                continue
+            arcname = f["filename"] or f["file_id"]
+            # dedupe filenames inside the archive
+            base, ext = os.path.splitext(arcname)
+            candidate = arcname
+            i = 1
+            while candidate in used_names:
+                candidate = f"{base} ({i}){ext}"
+                i += 1
+            used_names.add(candidate)
+            zf.write(src, arcname=candidate)
+    return zpath
+
+
+@api_router.get("/download/{pin}")
+async def download_all(pin: str, background_tasks: BackgroundTasks):
+    _validate_pin(pin)
+    doc = await _claim_download(pin)
+    files = doc.get("files", [])
+    if not files:
+        raise HTTPException(status_code=404, detail="No files in drop")
+
+    # Single-file shortcut: stream the file directly
+    if len(files) == 1:
+        meta = files[0]
+        path = UPLOAD_DIR / meta["file_id"]
+        if not path.exists():
+            await db.flashdrops.update_one({"pin": pin}, {"$set": {"active": False}})
+            raise HTTPException(status_code=404, detail="File missing on disk")
+        if doc['download_count'] >= doc['max_downloads']:
+            background_tasks.add_task(_cleanup_bundle_sync, doc)
+        headers = {
+            "Content-Disposition": f'attachment; filename="{meta["filename"]}"',
+            "Content-Length": str(meta["size"]),
+        }
+        return StreamingResponse(_stream_path(path), media_type=meta["content_type"], headers=headers)
+
+    # Multi-file: build a zip then stream
+    zpath = _build_bundle_zip(doc)
+    zip_name = f"flashdrop-{pin}.zip"
+
+    def stream_and_cleanup():
+        try:
+            yield from _stream_path(zpath)
+        finally:
+            zpath.unlink(missing_ok=True)
+
+    if doc['download_count'] >= doc['max_downloads']:
+        background_tasks.add_task(_cleanup_bundle_sync, doc)
+
+    headers = {
+        "Content-Disposition": f'attachment; filename="{zip_name}"',
+        "Content-Length": str(zpath.stat().st_size),
+    }
+    return StreamingResponse(stream_and_cleanup(), media_type="application/zip", headers=headers)
+
+
+def _cleanup_bundle_sync(doc: dict):
+    _delete_bundle_files(doc)
     try:
-        if file_path.exists():
-            file_path.unlink()
-    except Exception as e:
-        logger.warning(f"Failed deleting {file_path}: {e}")
-    # fire and forget
-    asyncio.create_task(db.flashdrops.update_one({"pin": doc['pin']}, {"$set": {"active": False}}))
+        asyncio.create_task(db.flashdrops.update_one({"pin": doc['pin']}, {"$set": {"active": False}}))
+    except RuntimeError:
+        # No running loop — fall back to a fresh client-less call is not possible; log only
+        logger.warning("No event loop available for cleanup of pin=%s", doc.get('pin'))
 
 
 @api_router.delete("/file/{pin}")
-async def delete_file(pin: str):
+async def delete_bundle(pin: str):
+    _validate_pin(pin)
     doc = await db.flashdrops.find_one({"pin": pin, "active": True}, {"_id": 0})
     if not doc:
         raise HTTPException(status_code=404, detail="Not found")
-    await cleanup_file(doc)
+    await cleanup_bundle(doc)
     return {"deleted": True}
 
 
@@ -267,9 +386,12 @@ async def periodic_cleanup():
     while True:
         try:
             now_iso = datetime.now(timezone.utc).isoformat()
-            cursor = db.flashdrops.find({"active": True, "expiry_at": {"$lte": now_iso}}, {"_id": 0})
+            cursor = db.flashdrops.find(
+                {"active": True, "expiry_at": {"$lte": now_iso}},
+                {"_id": 0},
+            )
             async for doc in cursor:
-                await cleanup_file(doc)
+                await cleanup_bundle(doc)
         except Exception as e:
             logger.warning(f"Cleanup error: {e}")
         await asyncio.sleep(60)
