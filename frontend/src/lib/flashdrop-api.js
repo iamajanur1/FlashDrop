@@ -28,11 +28,12 @@ export function timeUntil(isoString) {
   return `${mins}m ${secs.toString().padStart(2, "0")}s`;
 }
 
-export async function uploadFiles({ files, expiryMinutes, maxDownloads, onProgress }) {
+export async function uploadFiles({ files, expiryMinutes, maxDownloads, encrypted = false, onProgress }) {
   const form = new FormData();
   files.forEach((f) => form.append("files", f, f.name));
   form.append("expiry_minutes", String(expiryMinutes));
   form.append("max_downloads", String(maxDownloads));
+  form.append("encrypted", String(encrypted));
 
   const total = files.reduce((s, f) => s + f.size, 0);
   const res = await axios.post(`${API}/upload`, form, {
@@ -58,4 +59,8 @@ export function downloadAllUrl(pin) {
 
 export function downloadSingleUrl(pin, fileId) {
   return `${API}/download/${pin}/${fileId}`;
+}
+
+export function pingsStreamUrl(pin) {
+  return `${API}/pings/${pin}`;
 }

@@ -1,7 +1,8 @@
 import { useRef, useState } from "react";
-import { UploadCloud, FileIcon, X, Plus } from "lucide-react";
+import { UploadCloud, FileIcon, X, Plus, ShieldCheck } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { uploadFiles, formatSize, MAX_BUNDLE_SIZE, MAX_FILES_PER_BUNDLE } from "@/lib/flashdrop-api";
+import { generateKey, exportKeyToString, encryptFile } from "@/lib/flashdrop-crypto";
 import { toast } from "sonner";
 import PinResult from "./PinResult";
 
@@ -16,8 +17,10 @@ export default function SendFlow() {
   const [files, setFiles] = useState([]);
   const [expiry, setExpiry] = useState(30);
   const [limit, setLimit] = useState(3);
+  const [encrypt, setEncrypt] = useState(false);
   const [dragging, setDragging] = useState(false);
   const [uploading, setUploading] = useState(false);
+  const [encrypting, setEncrypting] = useState(false);
   const [progress, setProgress] = useState(0);
   const [result, setResult] = useState(null);
   const inputRef = useRef(null);
@@ -64,19 +67,36 @@ export default function SendFlow() {
     setUploading(true);
     setProgress(0);
     try {
+      let uploadFilesList = files;
+      let keyString = "";
+
+      if (encrypt) {
+        setEncrypting(true);
+        const key = await generateKey();
+        keyString = await exportKeyToString(key);
+        const encrypted = [];
+        for (const f of files) {
+          encrypted.push(await encryptFile(f, key));
+        }
+        uploadFilesList = encrypted;
+        setEncrypting(false);
+      }
+
       const data = await uploadFiles({
-        files,
+        files: uploadFilesList,
         expiryMinutes: expiry,
         maxDownloads: limit,
+        encrypted: encrypt,
         onProgress: ({ percent }) => setProgress(Math.round(percent * 100)),
       });
-      setResult(data);
-      toast.success("Ready to share!");
+      setResult({ ...data, encryptionKey: keyString });
+      toast.success(encrypt ? "Encrypted & ready to share!" : "Ready to share!");
     } catch (err) {
       const msg = err?.response?.data?.detail || err.message || "Upload failed";
       toast.error(typeof msg === "string" ? msg : "Upload failed");
     } finally {
       setUploading(false);
+      setEncrypting(false);
     }
   };
 
@@ -87,10 +107,11 @@ export default function SendFlow() {
   };
 
   let buttonLabel;
-  if (uploading) buttonLabel = "Uploading…";
+  if (encrypting) buttonLabel = "Encrypting…";
+  else if (uploading) buttonLabel = "Uploading…";
   else if (files.length === 0) buttonLabel = "Select files to continue";
-  else if (files.length === 1) buttonLabel = "Generate PIN";
-  else buttonLabel = `Generate PIN · ${files.length} files`;
+  else if (files.length === 1) buttonLabel = encrypt ? "Encrypt & Generate PIN" : "Generate PIN";
+  else buttonLabel = encrypt ? `Encrypt & Generate PIN · ${files.length} files` : `Generate PIN · ${files.length} files`;
 
   if (result) {
     return <PinResult result={result} onReset={reset} />;
@@ -237,17 +258,71 @@ export default function SendFlow() {
         </div>
       </div>
 
+      {/* E2EE toggle */}
+      <div
+        className={`rounded-xl border transition-colors duration-200 ${
+          encrypt ? "border-indigo-200 bg-indigo-50/60" : "border-gray-200 bg-gray-50/50"
+        }`}
+        data-testid="e2ee-toggle-row"
+      >
+        <label className="flex items-center gap-4 p-4 cursor-pointer">
+          <div
+            className={`w-10 h-10 rounded-xl flex items-center justify-center flex-shrink-0 transition-colors ${
+              encrypt ? "bg-indigo-600 text-white" : "bg-white text-gray-400 border border-gray-200"
+            }`}
+          >
+            <ShieldCheck className="w-5 h-5" strokeWidth={2} />
+          </div>
+          <div className="flex-1 min-w-0">
+            <div className="flex items-center gap-2">
+              <span className="font-medium text-gray-900 text-sm">Private Drop (E2EE)</span>
+              {encrypt && (
+                <span className="text-[10px] font-mono-pin uppercase tracking-wider text-indigo-600 bg-indigo-100 px-1.5 py-0.5 rounded">
+                  AES-256
+                </span>
+              )}
+            </div>
+            <p className="text-xs text-gray-500 mt-0.5 leading-snug">
+              Encrypt in your browser. Key stays in the link — never seen by our servers.
+            </p>
+          </div>
+          <button
+            type="button"
+            role="switch"
+            aria-checked={encrypt}
+            onClick={() => setEncrypt((v) => !v)}
+            disabled={uploading || encrypting}
+            data-testid="e2ee-toggle-switch"
+            className={`relative w-11 h-6 rounded-full transition-colors flex-shrink-0 disabled:opacity-50 ${
+              encrypt ? "bg-indigo-600" : "bg-gray-300"
+            }`}
+          >
+            <span
+              className={`absolute top-0.5 w-5 h-5 rounded-full bg-white shadow transition-transform ${
+                encrypt ? "translate-x-[22px]" : "translate-x-0.5"
+              }`}
+            />
+          </button>
+        </label>
+      </div>
+
       {/* Progress */}
-      {uploading && (
+      {(uploading || encrypting) && (
         <div className="space-y-2" data-testid="upload-progress">
           <div className="flex justify-between text-sm">
-            <span className="text-gray-700 font-medium">Uploading…</span>
-            <span className="text-gray-500 font-mono-pin">{progress}%</span>
+            <span className="text-gray-700 font-medium">
+              {encrypting ? "Encrypting locally…" : "Uploading…"}
+            </span>
+            <span className="text-gray-500 font-mono-pin">
+              {encrypting ? "—" : `${progress}%`}
+            </span>
           </div>
           <div className="w-full h-2 bg-gray-100 rounded-full overflow-hidden">
             <div
-              className="h-full bg-indigo-600 transition-all duration-300 ease-out rounded-full"
-              style={{ width: `${progress}%` }}
+              className={`h-full transition-all duration-300 ease-out rounded-full ${
+                encrypting ? "bg-indigo-400 fd-pulse w-full" : "bg-indigo-600"
+              }`}
+              style={encrypting ? undefined : { width: `${progress}%` }}
             />
           </div>
         </div>
@@ -256,7 +331,7 @@ export default function SendFlow() {
       {/* Submit */}
       <Button
         onClick={handleUpload}
-        disabled={files.length === 0 || uploading}
+        disabled={files.length === 0 || uploading || encrypting}
         data-testid="generate-pin-btn"
         className="w-full h-12 bg-indigo-600 hover:bg-indigo-700 text-white font-semibold rounded-xl transition-all duration-200 active:scale-[0.98] disabled:opacity-50 disabled:cursor-not-allowed"
       >

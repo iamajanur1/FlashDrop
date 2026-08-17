@@ -1,5 +1,6 @@
-from fastapi import FastAPI, APIRouter, UploadFile, File, Form, HTTPException, BackgroundTasks
+from fastapi import FastAPI, APIRouter, UploadFile, File, Form, HTTPException, BackgroundTasks, Request
 from fastapi.responses import StreamingResponse
+import json as _json
 from dotenv import load_dotenv
 from starlette.middleware.cors import CORSMiddleware
 from motor.motor_asyncio import AsyncIOMotorClient
@@ -59,6 +60,7 @@ class UploadResponse(BaseModel):
     expiry_at: str
     max_downloads: int
     share_url: str
+    encrypted: bool = False
 
 
 class BundleInfo(BaseModel):
@@ -72,6 +74,7 @@ class BundleInfo(BaseModel):
     download_count: int
     remaining_downloads: int
     expired: bool
+    encrypted: bool = False
 
 
 # ---------- Helpers ----------
@@ -116,6 +119,63 @@ async def cleanup_bundle(doc: dict):
     await db.flashdrops.update_one({"pin": doc['pin']}, {"$set": {"active": False}})
 
 
+# ---------- Live pings (in-memory pub/sub) ----------
+# For each active PIN, a set of asyncio.Queue subscribers currently listening via SSE.
+_ping_subscribers: dict[str, set[asyncio.Queue]] = {}
+
+
+def _subscribe_pings(pin: str) -> asyncio.Queue:
+    q: asyncio.Queue = asyncio.Queue(maxsize=64)
+    _ping_subscribers.setdefault(pin, set()).add(q)
+    return q
+
+
+def _unsubscribe_pings(pin: str, q: asyncio.Queue) -> None:
+    subs = _ping_subscribers.get(pin)
+    if subs is None:
+        return
+    subs.discard(q)
+    if not subs:
+        _ping_subscribers.pop(pin, None)
+
+
+def _publish_ping(pin: str, event: dict) -> None:
+    subs = _ping_subscribers.get(pin)
+    if not subs:
+        return
+    for q in list(subs):
+        try:
+            q.put_nowait(event)
+        except asyncio.QueueFull:
+            # drop the event for this slow subscriber
+            pass
+
+
+def _device_from_ua(ua: str) -> str:
+    ua = (ua or "").lower()
+    if "mobile" in ua or "android" in ua or "iphone" in ua:
+        return "Mobile"
+    if "ipad" in ua or "tablet" in ua:
+        return "Tablet"
+    return "Desktop"
+
+
+def _browser_from_ua(ua: str) -> str:
+    ua = ua or ""
+    # order matters (Edge/OPR ship "Chrome" in UA)
+    if "Edg/" in ua:
+        return "Edge"
+    if "OPR/" in ua or "Opera" in ua:
+        return "Opera"
+    if "Firefox/" in ua:
+        return "Firefox"
+    if "Chrome/" in ua:
+        return "Chrome"
+    if "Safari/" in ua:
+        return "Safari"
+    return "Unknown"
+
+
 # ---------- Routes ----------
 @api_router.get("/")
 async def root():
@@ -156,6 +216,7 @@ async def upload_bundle(
     files: List[UploadFile] = File(...),
     expiry_minutes: int = Form(30),
     max_downloads: int = Form(3),
+    encrypted: bool = Form(False),
 ):
     if expiry_minutes not in ALLOWED_EXPIRY_MIN:
         raise HTTPException(status_code=400, detail=f"expiry_minutes must be one of {sorted(ALLOWED_EXPIRY_MIN)}")
@@ -204,6 +265,7 @@ async def upload_bundle(
         "download_count": 0,
         "last_downloaded_at": None,
         "active": True,
+        "encrypted": encrypted,
     }
     await db.flashdrops.insert_one(doc)
 
@@ -215,6 +277,7 @@ async def upload_bundle(
         expiry_at=doc['expiry_at'],
         max_downloads=max_downloads,
         share_url=f"/receive?pin={pin}",
+        encrypted=encrypted,
     )
 
 
@@ -244,6 +307,7 @@ async def get_bundle_info(pin: str):
         download_count=doc['download_count'],
         remaining_downloads=max(0, doc['max_downloads'] - doc['download_count']),
         expired=False,
+        encrypted=bool(doc.get('encrypted', False)),
     )
 
 
@@ -274,7 +338,7 @@ def _stream_path(path: Path):
 
 
 @api_router.get("/download/{pin}/{file_id}")
-async def download_single(pin: str, file_id: str, background_tasks: BackgroundTasks):
+async def download_single(pin: str, file_id: str, background_tasks: BackgroundTasks, request: Request):
     _validate_pin(pin)
     # Verify the file_id belongs to this drop BEFORE consuming a download slot.
     existing = await db.flashdrops.find_one(
@@ -295,6 +359,18 @@ async def download_single(pin: str, file_id: str, background_tasks: BackgroundTa
 
     if doc['download_count'] >= doc['max_downloads']:
         background_tasks.add_task(_cleanup_bundle_sync, doc)
+
+    ua = request.headers.get("user-agent", "")
+    _publish_ping(pin, {
+        "type": "download",
+        "kind": "single",
+        "filename": meta["filename"],
+        "size": meta["size"],
+        "at": datetime.now(timezone.utc).isoformat(),
+        "device": _device_from_ua(ua),
+        "browser": _browser_from_ua(ua),
+        "downloads_remaining": max(0, doc['max_downloads'] - doc['download_count']),
+    })
 
     headers = {
         "Content-Disposition": f'attachment; filename="{meta["filename"]}"',
@@ -328,12 +404,21 @@ def _build_bundle_zip(doc: dict) -> Path:
 
 
 @api_router.get("/download/{pin}")
-async def download_all(pin: str, background_tasks: BackgroundTasks):
+async def download_all(pin: str, background_tasks: BackgroundTasks, request: Request):
     _validate_pin(pin)
     doc = await _claim_download(pin)
     files = doc.get("files", [])
     if not files:
         raise HTTPException(status_code=404, detail="No files in drop")
+
+    ua = request.headers.get("user-agent", "")
+    ping_base = {
+        "type": "download",
+        "at": datetime.now(timezone.utc).isoformat(),
+        "device": _device_from_ua(ua),
+        "browser": _browser_from_ua(ua),
+        "downloads_remaining": max(0, doc['max_downloads'] - doc['download_count']),
+    }
 
     # Single-file shortcut: stream the file directly
     if len(files) == 1:
@@ -344,6 +429,7 @@ async def download_all(pin: str, background_tasks: BackgroundTasks):
             raise HTTPException(status_code=404, detail="File missing on disk")
         if doc['download_count'] >= doc['max_downloads']:
             background_tasks.add_task(_cleanup_bundle_sync, doc)
+        _publish_ping(pin, {**ping_base, "kind": "single", "filename": meta["filename"], "size": meta["size"]})
         headers = {
             "Content-Disposition": f'attachment; filename="{meta["filename"]}"',
             "Content-Length": str(meta["size"]),
@@ -363,6 +449,14 @@ async def download_all(pin: str, background_tasks: BackgroundTasks):
     if doc['download_count'] >= doc['max_downloads']:
         background_tasks.add_task(_cleanup_bundle_sync, doc)
 
+    _publish_ping(pin, {
+        **ping_base,
+        "kind": "zip",
+        "filename": zip_name,
+        "size": zpath.stat().st_size,
+        "file_count": len(files),
+    })
+
     headers = {
         "Content-Disposition": f'attachment; filename="{zip_name}"',
         "Content-Length": str(zpath.stat().st_size),
@@ -377,6 +471,41 @@ def _cleanup_bundle_sync(doc: dict):
     except RuntimeError:
         # No running loop — fall back to a fresh client-less call is not possible; log only
         logger.warning("No event loop available for cleanup of pin=%s", doc.get('pin'))
+
+
+@api_router.get("/pings/{pin}")
+async def pings_stream(pin: str, request: Request):
+    """Server-Sent Events feed. Emits `download` events when someone downloads this drop."""
+    _validate_pin(pin)
+    # Confirm the drop exists (don't leak whether an inactive/expired PIN once existed).
+    doc = await db.flashdrops.find_one({"pin": pin, "active": True}, {"_id": 0, "pin": 1})
+    if not doc:
+        raise HTTPException(status_code=404, detail="Drop not found")
+
+    q = _subscribe_pings(pin)
+
+    async def event_gen():
+        # Initial hello so the client knows it's connected.
+        yield f"event: ready\ndata: {_json.dumps({'pin': pin})}\n\n"
+        try:
+            while True:
+                if await request.is_disconnected():
+                    break
+                try:
+                    event = await asyncio.wait_for(q.get(), timeout=20.0)
+                    yield f"event: {event.get('type', 'message')}\ndata: {_json.dumps(event)}\n\n"
+                except asyncio.TimeoutError:
+                    # keep-alive comment; harmless to the client
+                    yield ": keep-alive\n\n"
+        finally:
+            _unsubscribe_pings(pin, q)
+
+    headers = {
+        "Cache-Control": "no-cache, no-transform",
+        "X-Accel-Buffering": "no",
+        "Connection": "keep-alive",
+    }
+    return StreamingResponse(event_gen(), media_type="text/event-stream", headers=headers)
 
 
 @api_router.delete("/file/{pin}")

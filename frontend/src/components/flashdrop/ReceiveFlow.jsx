@@ -8,6 +8,8 @@ import {
   RotateCcw,
   AlertCircle,
   Package,
+  ShieldCheck,
+  KeyRound,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
@@ -23,6 +25,7 @@ import {
   formatSize,
   timeUntil,
 } from "@/lib/flashdrop-api";
+import { importKeyFromString, decryptBlob, readKeyFromFragment } from "@/lib/flashdrop-crypto";
 import { toast } from "sonner";
 
 export default function ReceiveFlow({ initialPin = "" }) {
@@ -33,6 +36,15 @@ export default function ReceiveFlow({ initialPin = "" }) {
   const [progress, setProgress] = useState(0);
   const [done, setDone] = useState(false);
   const [error, setError] = useState("");
+  const [keyString, setKeyString] = useState(() => readKeyFromFragment());
+  const [decrypting, setDecrypting] = useState(false);
+
+  // Track hash changes (user may paste a link into the address bar)
+  useEffect(() => {
+    const onHash = () => setKeyString(readKeyFromFragment());
+    window.addEventListener("hashchange", onHash);
+    return () => window.removeEventListener("hashchange", onHash);
+  }, []);
 
   const fetchInfo = useCallback(async (value) => {
     setLoading(true);
@@ -65,7 +77,7 @@ export default function ReceiveFlow({ initialPin = "" }) {
     }
   };
 
-  const triggerDownload = async ({ url, fallbackName, fallbackType, key, expectedSize }) => {
+  const triggerDownload = async ({ url, fallbackName, fallbackType, key, expectedSize, decryptTo }) => {
     setBusyKey(key);
     setProgress(0);
     try {
@@ -77,17 +89,30 @@ export default function ReceiveFlow({ initialPin = "" }) {
           setProgress(total ? Math.round((loaded / total) * 100) : 0);
         },
       });
-      const blob = new Blob([res.data], { type: fallbackType || "application/octet-stream" });
+      let blob;
+      let outName = fallbackName;
+      if (decryptTo) {
+        setDecrypting(true);
+        try {
+          const cryptoKey = await importKeyFromString(keyString);
+          blob = await decryptBlob(res.data, cryptoKey, decryptTo.type || "application/octet-stream");
+          outName = decryptTo.name || fallbackName;
+        } finally {
+          setDecrypting(false);
+        }
+      } else {
+        blob = new Blob([res.data], { type: fallbackType || "application/octet-stream" });
+      }
       const objectUrl = window.URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = objectUrl;
-      a.download = fallbackName;
+      a.download = outName;
       document.body.appendChild(a);
       a.click();
       a.remove();
       window.URL.revokeObjectURL(objectUrl);
       setDone(true);
-      toast.success("Download complete");
+      toast.success(decryptTo ? "Decrypted & saved" : "Download complete");
     } catch (err) {
       const msg = err?.response?.data?.detail || err.message || "Download failed";
       toast.error(typeof msg === "string" ? msg : "Download failed");
@@ -96,8 +121,21 @@ export default function ReceiveFlow({ initialPin = "" }) {
     }
   };
 
+  const encryptedDrop = !!info?.encrypted;
+  const hasKey = !!keyString;
+  const canDecrypt = !encryptedDrop || hasKey;
+
   const handleDownloadAll = () => {
     if (!info) return;
+    if (encryptedDrop && info.file_count > 1) {
+      // ZIP-ing encrypted blobs makes no sense — force per-file for E2EE bundles.
+      toast.info("Encrypted drops decrypt one file at a time.");
+      return;
+    }
+    if (encryptedDrop && !hasKey) {
+      toast.error("Missing decryption key in link");
+      return;
+    }
     const isSingle = info.file_count === 1;
     const file = info.files?.[0];
     triggerDownload({
@@ -106,16 +144,22 @@ export default function ReceiveFlow({ initialPin = "" }) {
       fallbackType: isSingle ? file?.content_type : "application/zip",
       key: "all",
       expectedSize: info.total_size,
+      decryptTo: encryptedDrop && isSingle ? { name: file?.filename, type: file?.content_type } : null,
     });
   };
 
   const handleDownloadSingle = (file) => {
+    if (encryptedDrop && !hasKey) {
+      toast.error("Missing decryption key in link");
+      return;
+    }
     triggerDownload({
       url: downloadSingleUrl(pin, file.file_id),
       fallbackName: file.filename,
       fallbackType: file.content_type,
       key: file.file_id,
       expectedSize: file.size,
+      decryptTo: encryptedDrop ? { name: file.filename, type: file.content_type } : null,
     });
   };
 
@@ -215,12 +259,39 @@ export default function ReceiveFlow({ initialPin = "" }) {
               )}
             </div>
             <div className="flex-1 min-w-0">
-              <p className="font-medium text-gray-900 truncate" data-testid="received-bundle-title">
-                {isMulti ? `${info.file_count} files` : info.files?.[0]?.filename}
-              </p>
+              <div className="flex items-center gap-2">
+                <p className="font-medium text-gray-900 truncate" data-testid="received-bundle-title">
+                  {isMulti ? `${info.file_count} files` : info.files?.[0]?.filename}
+                </p>
+                {encryptedDrop && (
+                  <span
+                    data-testid="e2ee-receive-badge"
+                    className="inline-flex items-center gap-1 text-[10px] font-mono-pin uppercase tracking-wider text-indigo-700 bg-indigo-100 px-1.5 py-0.5 rounded"
+                  >
+                    <ShieldCheck className="w-3 h-3" strokeWidth={2.4} /> E2EE
+                  </span>
+                )}
+              </div>
               <p className="text-sm text-gray-500">{formatSize(info.total_size)}</p>
             </div>
           </div>
+
+          {encryptedDrop && !hasKey && (
+            <div
+              className="rounded-xl border border-amber-200 bg-amber-50 p-4 flex items-start gap-3"
+              data-testid="missing-key-warning"
+            >
+              <KeyRound className="w-5 h-5 text-amber-600 flex-shrink-0 mt-0.5" />
+              <div className="text-sm">
+                <p className="font-semibold text-amber-900">Decryption key missing</p>
+                <p className="text-amber-800 mt-0.5">
+                  This drop is end-to-end encrypted. Open the full link the sender shared with you —
+                  it contains a secret key after <span className="font-mono-pin">#</span> that never
+                  touched our servers.
+                </p>
+              </div>
+            </div>
+          )}
 
           {/* Per-file list (only show for multi-file) */}
           {isMulti && (
@@ -240,12 +311,12 @@ export default function ReceiveFlow({ initialPin = "" }) {
                     </div>
                     <button
                       onClick={() => handleDownloadSingle(f)}
-                      disabled={downloading}
+                      disabled={downloading || decrypting || !canDecrypt}
                       data-testid={`download-single-btn-${f.file_id}`}
                       className="px-3 py-1.5 text-xs font-medium text-indigo-600 hover:bg-indigo-50 rounded-lg transition-colors disabled:opacity-40 disabled:cursor-not-allowed flex items-center gap-1"
                     >
                       <Download className="w-3 h-3" />
-                      {busy ? `${progress}%` : "Get"}
+                      {busy ? (decrypting ? "…" : `${progress}%`) : "Get"}
                     </button>
                   </div>
                 );
@@ -270,42 +341,59 @@ export default function ReceiveFlow({ initialPin = "" }) {
           </div>
 
           {/* Progress (only show during downloads) */}
-          {downloading && (
+          {(downloading || decrypting) && (
             <div className="space-y-2" data-testid="download-progress">
               <div className="flex justify-between text-sm">
-                <span className="text-gray-700 font-medium">Downloading…</span>
-                <span className="text-gray-500 font-mono-pin">{progress}%</span>
+                <span className="text-gray-700 font-medium">
+                  {decrypting ? "Decrypting locally…" : "Downloading…"}
+                </span>
+                <span className="text-gray-500 font-mono-pin">
+                  {decrypting ? "—" : `${progress}%`}
+                </span>
               </div>
               <div className="w-full h-2 bg-gray-100 rounded-full overflow-hidden">
                 <div
-                  className="h-full bg-indigo-600 transition-all duration-300 ease-out rounded-full"
-                  style={{ width: `${progress}%` }}
+                  className={`h-full transition-all duration-300 ease-out rounded-full ${
+                    decrypting ? "bg-indigo-400 fd-pulse w-full" : "bg-indigo-600"
+                  }`}
+                  style={decrypting ? undefined : { width: `${progress}%` }}
                 />
               </div>
             </div>
           )}
 
-          <Button
-            onClick={handleDownloadAll}
-            disabled={downloading}
-            data-testid="download-file-btn"
-            className="w-full h-12 bg-indigo-600 hover:bg-indigo-700 text-white font-semibold rounded-xl transition-all duration-200 active:scale-[0.98] disabled:opacity-50"
-          >
-            {isMulti ? (
-              <Package className="w-4 h-4 mr-2" />
-            ) : (
-              <Download className="w-4 h-4 mr-2" />
-            )}
-            {busyKey === "all"
-              ? "Downloading…"
-              : isMulti
-                ? `Download all as ZIP · ${formatSize(info.total_size)}`
-                : "Download file"}
-          </Button>
+          {(!encryptedDrop || !isMulti) && (
+            <Button
+              onClick={handleDownloadAll}
+              disabled={downloading || decrypting || !canDecrypt}
+              data-testid="download-file-btn"
+              className="w-full h-12 bg-indigo-600 hover:bg-indigo-700 text-white font-semibold rounded-xl transition-all duration-200 active:scale-[0.98] disabled:opacity-50"
+            >
+              {isMulti ? (
+                <Package className="w-4 h-4 mr-2" />
+              ) : (
+                <Download className="w-4 h-4 mr-2" />
+              )}
+              {busyKey === "all"
+                ? decrypting
+                  ? "Decrypting…"
+                  : "Downloading…"
+                : isMulti
+                  ? `Download all as ZIP · ${formatSize(info.total_size)}`
+                  : encryptedDrop
+                    ? "Decrypt & download"
+                    : "Download file"}
+            </Button>
+          )}
 
-          {isMulti && (
+          {isMulti && !encryptedDrop && (
             <p className="text-xs text-gray-400 text-center -mt-3">
               Each download (ZIP or individual) counts as 1 against the limit.
+            </p>
+          )}
+          {isMulti && encryptedDrop && (
+            <p className="text-xs text-gray-400 text-center">
+              Encrypted drops decrypt one file at a time (ZIP not available).
             </p>
           )}
         </div>
