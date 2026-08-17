@@ -37,8 +37,8 @@ export default function PinResult({ result, onReset }) {
         const data = JSON.parse(e.data);
         setPings((prev) => [{ ...data, id: `${data.at}-${Math.random()}` }, ...prev].slice(0, 20));
         toast.success(`Someone downloaded · ${data.device || "Unknown device"}`);
-      } catch {
-        /* ignore */
+      } catch (parseErr) {
+        console.error("Bad ping payload", parseErr);
       }
     });
     es.onerror = () => setLive(false);
