@@ -74,7 +74,7 @@ export default function PinResult({ result, uploadRuntime = {}, onRetryFile, onR
   const [live, setLive] = useState(false);
   const [events, setEvents] = useState([]);
   const [activeView, setActiveView] = useState("share");
-  const [qrOpen, setQrOpen] = useState(false);
+  const [qrOpen, setQrOpen] = useState(true);
   const [manage, setManage] = useState({
     max_pickups: result.max_pickups,
     pickup_count: 0,
