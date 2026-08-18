@@ -80,14 +80,14 @@
   },
   "media": {
     "background_texture": {
-      "url": "https://static.prod-images.emergentagent.com/jobs/b1126e9c-b8ae-4b33-83e6-82e7a5fc7865/images/4dd12a0424410053da015a9c2f9592b877162806102c245aa34a26bbd91c7188.png",
+      "local_asset": "frontend/src/assets/flashdrop-background.png",
       "description": "Abstract minimalist background, soft light gray and white with a subtle, glowing electric blue geometric glass sphere floating.",
-      "usage": "Optional: Use as a fixed background image for the body with opacity-30 and mix-blend-multiply to add subtle texture behind the 720px app container."
+      "usage": "Optional: add a project-owned image and use it as a fixed background texture behind the app container."
     },
     "file_icon_3d": {
-      "url": "https://static.prod-images.emergentagent.com/jobs/b1126e9c-b8ae-4b33-83e6-82e7a5fc7865/images/0f202144ae6b5917f80ae081156e8551dd64b99fa0392c3fcca612892bd69c93.png",
+      "local_asset": "frontend/src/assets/flashdrop-file-icon.png",
       "description": "Minimalist 3D icon of a folded paper plane or file, frosted glass material with a soft electric blue accent.",
-      "usage": "Use inside the drag-and-drop zone or the success screen as a premium hero visual for the empty state (w-24 h-24)."
+      "usage": "Optional: add a project-owned icon for the drag-and-drop zone or success screen."
     },
     "abstract_pattern_unsplash": {
       "url": "https://images.unsplash.com/photo-1763929154494-a3d6eba05282?crop=entropy&cs=srgb&fm=jpg&ixid=M3w3NTY2Nzh8MHwxfHNlYXJjaHwxfHxhYnN0cmFjdCUyMG1pbmltYWxpc3QlMjBnZW9tZXRyaWMlMjB3aGl0ZSUyMGJsdWUlMjB0ZXh0dXJlfGVufDB8fHx8MTc3NzYzNzg1MXww&ixlib=rb-4.1.0&q=85",

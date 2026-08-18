@@ -68,11 +68,11 @@ FlashDrop: modern instant file transport platform for urgent file sharing. Not c
 
 ## Files Touched (Feb 17, 2026)
 - `/app/backend/server.py` — encrypted flag, ping pub/sub, SSE endpoint
-- `/app/frontend/src/App.js` — added landing route, moved app to `/app`
+- `/app/frontend/src/App.jsx` — added landing route, moved app to `/app`
 - `/app/frontend/src/pages/Landing.jsx` + `Landing.css` (new)
 - `/app/frontend/src/lib/flashdrop-crypto.js` (new — Web Crypto helpers)
 - `/app/frontend/src/lib/flashdrop-api.js` — pass `encrypted`, `pingsStreamUrl`
 - `/app/frontend/src/components/flashdrop/SendFlow.jsx` — E2EE toggle + client-side encryption
 - `/app/frontend/src/components/flashdrop/PinResult.jsx` — E2EE badge, key in share URL, live pings feed
 - `/app/frontend/src/components/flashdrop/ReceiveFlow.jsx` — key from URL fragment + client-side decryption
-- `/app/frontend/public/index.html` — added Bricolage Grotesque + Outfit + JetBrains Mono fonts
+- `/app/frontend/index.html` + `/app/frontend/src/index.css` — app shell metadata and shared font stack
