@@ -16,13 +16,6 @@ export default defineConfig({
 
   envPrefix: ["VITE_", "REACT_APP_"],
 
-  server: {
-    host: "0.0.0.0",
-    allowedHosts: [
-      "flashdropp.up.railway.app",
-    ],
-  },
-
   build: {
     target: "es2020",
     sourcemap: false,
