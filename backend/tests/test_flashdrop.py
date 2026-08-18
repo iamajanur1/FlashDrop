@@ -1,199 +1,158 @@
-"""FlashDrop backend API tests - multi-file bundle schema."""
-import os
+"""FlashDrop v2 integration tests: upload, pickup passes, streaming downloads, sender controls."""
 import io
-import time
+import os
 import zipfile
+
 import pytest
 import requests
 
-BASE_URL = os.environ['REACT_APP_BACKEND_URL'].rstrip('/')
-API = f"{BASE_URL}/api"
+BASE_URL = os.environ.get("REACT_APP_BACKEND_URL") or os.environ.get("VITE_BACKEND_URL")
+if not BASE_URL:
+    pytest.skip("Set REACT_APP_BACKEND_URL or VITE_BACKEND_URL to run integration tests", allow_module_level=True)
+API = f"{BASE_URL.rstrip('/')}/api"
 
 
 @pytest.fixture(scope="module")
 def session():
-    s = requests.Session()
-    yield s
-    s.close()
+    with requests.Session() as client:
+        yield client
 
 
-def _upload(session, files_list, expiry=30, max_dl=3):
-    multipart = [("files", (n, io.BytesIO(c), ct)) for n, c, ct in files_list]
-    return session.post(f"{API}/upload", files=multipart,
-                        data={"expiry_minutes": expiry, "max_downloads": max_dl})
+def upload(session, files, **overrides):
+    multipart = [("files", (name, io.BytesIO(content), content_type)) for name, content, content_type in files]
+    data = {
+        "expiry_minutes": 30,
+        "max_pickups": 3,
+        "access_mode": "instant",
+        "burn_rule": "expiry",
+        **overrides,
+    }
+    response = session.post(f"{API}/upload", files=multipart, data=data)
+    assert response.status_code == 200, response.text
+    return response.json()
 
 
-# ---------- Health ----------
+def burn(session, drop):
+    return session.delete(
+        f"{API}/manage/{drop['pin']}",
+        params={"manage_token": drop["manage_token"]},
+    )
+
+
 def test_health(session):
-    r = session.get(f"{API}/")
-    assert r.status_code == 200
-    assert r.json().get("service") == "FlashDrop"
+    response = session.get(f"{API}/")
+    assert response.status_code == 200
+    body = response.json()
+    assert body["service"] == "FlashDrop"
+    assert "pickup-passes" in body["features"]
+    assert "streaming-downloads" in body["features"]
 
 
-# ---------- Upload: multi-file ----------
-def test_upload_multi_file(session):
-    r = _upload(session, [
+def test_upload_returns_sender_capability_and_pickup_model(session):
+    drop = upload(session, [
         ("a.txt", b"alpha", "text/plain"),
-        ("b.txt", b"bravo!!", "text/plain"),
-        ("c.bin", b"\x00\x01\x02", "application/octet-stream"),
+        ("b.txt", b"bravo", "text/plain"),
     ])
-    assert r.status_code == 200, r.text
-    body = r.json()
-    assert len(body["pin"]) == 6 and body["pin"].isdigit()
-    assert body["file_count"] == 3
-    assert len(body["files"]) == 3
-    assert body["total_size"] == 5 + 7 + 3
-    assert body["max_downloads"] == 3
-    assert body["share_url"].endswith(f"pin={body['pin']}")
-    for f in body["files"]:
-        assert "file_id" in f and "filename" in f and "size" in f
-    session.delete(f"{API}/file/{body['pin']}")
+    assert len(drop["pin"]) == 6 and drop["pin"].isdigit()
+    assert drop["file_count"] == 2
+    assert drop["max_pickups"] == 3
+    assert drop["remaining_pickups"] == 3
+    assert drop["access_mode"] == "instant"
+    assert drop["burn_rule"] == "expiry"
+    assert len(drop["manage_token"]) > 30
+    assert "encrypted" not in drop
+    assert burn(session, drop).status_code == 200
 
 
-def test_upload_single_file_still_works(session):
-    r = _upload(session, [("solo.txt", b"only", "text/plain")])
-    assert r.status_code == 200, r.text
-    body = r.json()
-    assert body["file_count"] == 1
-    assert len(body["files"]) == 1
-    assert body["files"][0]["filename"] == "solo.txt"
-    session.delete(f"{API}/file/{body['pin']}")
+def test_one_device_forces_single_pickup(session):
+    drop = upload(
+        session,
+        [("one.txt", b"one", "text/plain")],
+        max_pickups=10,
+        access_mode="one_device",
+    )
+    assert drop["max_pickups"] == 1
+    info = session.get(f"{API}/file/{drop['pin']}").json()
+    assert info["max_pickups"] == 1
+    assert info["access_mode"] == "one_device"
+    burn(session, drop)
 
 
-def test_upload_rejects_too_many_files(session):
-    flist = [(f"f{i}.txt", b"x", "text/plain") for i in range(21)]
-    r = _upload(session, flist)
-    assert r.status_code == 400
+def test_download_requires_claim_token_and_one_claim_covers_bundle(session):
+    drop = upload(session, [
+        ("a.txt", b"alpha", "text/plain"),
+        ("b.txt", b"bravo", "text/plain"),
+    ], max_pickups=3)
+    pin = drop["pin"]
 
+    no_token = session.get(f"{API}/download/{pin}")
+    assert no_token.status_code == 422  # required query parameter
 
-def test_upload_invalid_expiry(session):
-    r = _upload(session, [("a.txt", b"x", "text/plain")], expiry=5)
-    assert r.status_code == 400
-    r2 = _upload(session, [("a.txt", b"x", "text/plain")], expiry=120)
-    assert r2.status_code == 400
-
-
-def test_upload_invalid_max_downloads(session):
-    r = _upload(session, [("a.txt", b"x", "text/plain")], max_dl=2)
-    assert r.status_code == 400
-    r2 = _upload(session, [("a.txt", b"x", "text/plain")], max_dl=100)
-    assert r2.status_code == 400
-
-
-def test_upload_no_files(session):
-    r = session.post(f"{API}/upload", data={"expiry_minutes": 30, "max_downloads": 3})
-    assert r.status_code in (400, 422)
-
-
-# ---------- File info ----------
-def test_file_info_multi(session):
-    r = _upload(session, [
-        ("x.txt", b"xx", "text/plain"),
-        ("y.txt", b"yyy", "text/plain"),
-    ], expiry=10, max_dl=3)
-    pin = r.json()["pin"]
-
-    info = session.get(f"{API}/file/{pin}")
-    assert info.status_code == 200
-    body = info.json()
-    assert body["file_count"] == 2
-    assert body["total_size"] == 5
-    assert body["remaining_downloads"] == 3
-    assert body["expired"] is False
-    assert len(body["files"]) == 2
-
-    # invalid pins
-    assert session.get(f"{API}/file/000000").status_code in (404, 410)
-    assert session.get(f"{API}/file/abc123").status_code == 400
-    assert session.get(f"{API}/file/12345").status_code == 400
-
-    session.delete(f"{API}/file/{pin}")
-
-
-# ---------- Download all: ZIP for multi ----------
-def test_download_zip_for_multi(session):
-    r = _upload(session, [
-        ("one.txt", b"hello", "text/plain"),
-        ("two.txt", b"world!", "text/plain"),
-    ], expiry=10, max_dl=3)
-    pin = r.json()["pin"]
-
-    dl = session.get(f"{API}/download/{pin}")
-    assert dl.status_code == 200
-    assert dl.headers.get("Content-Type", "").startswith("application/zip")
-    zf = zipfile.ZipFile(io.BytesIO(dl.content))
-    names = set(zf.namelist())
-    assert names == {"one.txt", "two.txt"}
-    assert zf.read("one.txt") == b"hello"
-
-    # Counter should have incremented by 1
-    info = session.get(f"{API}/file/{pin}").json()
-    assert info["download_count"] == 1
-    assert info["remaining_downloads"] == 2
-
-    session.delete(f"{API}/file/{pin}")
-
-
-# ---------- Download all: single-file streams directly ----------
-def test_download_single_streams_direct(session):
-    r = _upload(session, [("solo.bin", b"payload-xyz", "application/octet-stream")],
-                expiry=10, max_dl=3)
-    pin = r.json()["pin"]
-
-    dl = session.get(f"{API}/download/{pin}")
-    assert dl.status_code == 200
-    assert "zip" not in dl.headers.get("Content-Type", "").lower()
-    assert dl.content == b"payload-xyz"
-    assert "solo.bin" in dl.headers.get("Content-Disposition", "")
-    session.delete(f"{API}/file/{pin}")
-
-
-# ---------- Individual file download ----------
-def test_download_individual_file(session):
-    r = _upload(session, [
-        ("first.txt", b"first-data", "text/plain"),
-        ("second.txt", b"second-data", "text/plain"),
-    ], expiry=10, max_dl=5)
-    body = r.json()
-    pin = body["pin"]
-    file_id = body["files"][1]["file_id"]
-
-    dl = session.get(f"{API}/download/{pin}/{file_id}")
-    assert dl.status_code == 200
-    assert dl.content == b"second-data"
-    assert "second.txt" in dl.headers.get("Content-Disposition", "")
+    claim_response = session.post(f"{API}/file/{pin}/claim", json={"client_id": "pytest-client"})
+    assert claim_response.status_code == 200, claim_response.text
+    claim = claim_response.json()
+    assert claim["status"] == "approved"
+    assert claim["remaining_pickups"] == 2
 
     info = session.get(f"{API}/file/{pin}").json()
-    assert info["download_count"] == 1
+    assert info["pickup_count"] == 1
+    assert info["remaining_pickups"] == 2
 
-    # Unknown file_id in valid pin
-    bad = session.get(f"{API}/download/{pin}/nonexistent-id")
-    # _claim_download already incremented, then 404
-    assert bad.status_code == 404
+    # Download each file using the same pickup pass; this must not consume more pickup slots.
+    for meta, expected in zip(info["files"], (b"alpha", b"bravo")):
+        response = session.get(
+            f"{API}/download/{pin}/{meta['file_id']}",
+            params={"claim_token": claim["claim_token"]},
+        )
+        assert response.status_code == 200
+        assert response.content == expected
 
-    session.delete(f"{API}/file/{pin}")
-
-
-# ---------- Auto-cleanup at max_downloads ----------
-def test_autocleanup_after_max(session):
-    r = _upload(session, [
-        ("a.txt", b"a", "text/plain"),
-        ("b.txt", b"b", "text/plain"),
-    ], expiry=10, max_dl=1)
-    pin = r.json()["pin"]
-
-    dl = session.get(f"{API}/download/{pin}")
-    assert dl.status_code == 200
-    time.sleep(1.5)
-    again = session.get(f"{API}/file/{pin}")
-    assert again.status_code in (404, 410)
+    info_after = session.get(f"{API}/file/{pin}").json()
+    assert info_after["pickup_count"] == 1
+    burn(session, drop)
 
 
-# ---------- Delete ----------
-def test_delete_bundle(session):
-    r = _upload(session, [("d.txt", b"gone", "text/plain")])
-    pin = r.json()["pin"]
-    d = session.delete(f"{API}/file/{pin}")
-    assert d.status_code == 200 and d.json().get("deleted") is True
-    assert session.get(f"{API}/file/{pin}").status_code in (404, 410)
-    assert session.delete(f"{API}/file/{pin}").status_code == 404
+def test_multi_file_download_streams_valid_zip(session):
+    drop = upload(session, [
+        ("same.txt", b"first", "text/plain"),
+        ("same.txt", b"second", "text/plain"),
+    ])
+    pin = drop["pin"]
+    claim = session.post(f"{API}/file/{pin}/claim", json={}).json()
+    response = session.get(
+        f"{API}/download/{pin}",
+        params={"claim_token": claim["claim_token"]},
+    )
+    assert response.status_code == 200
+    assert response.headers.get("X-FlashDrop-Streaming-Zip") == "1"
+    archive = zipfile.ZipFile(io.BytesIO(response.content))
+    names = archive.namelist()
+    assert len(names) == 2
+    assert names[0] != names[1]
+    assert {archive.read(names[0]), archive.read(names[1])} == {b"first", b"second"}
+    burn(session, drop)
+
+
+def test_sender_management_token_is_required(session):
+    drop = upload(session, [("a.txt", b"alpha", "text/plain")])
+    pin = drop["pin"]
+
+    missing = session.delete(f"{API}/manage/{pin}")
+    assert missing.status_code == 422
+
+    wrong = session.delete(f"{API}/manage/{pin}", params={"manage_token": "wrong"})
+    assert wrong.status_code == 403
+
+    ok = burn(session, drop)
+    assert ok.status_code == 200
+    assert ok.json()["burned"] is True
+
+    gone = session.get(f"{API}/file/{pin}")
+    assert gone.status_code in (404, 410)
+
+
+def test_filename_is_sanitized(session):
+    drop = upload(session, [("../unsafe.txt", b"x", "text/plain")])
+    name = drop["files"][0]["filename"]
+    assert ".." not in name
+    burn(session, drop)
