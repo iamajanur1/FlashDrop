@@ -22,6 +22,7 @@ import {
   Zap,
 } from "lucide-react";
 import "./Landing.css";
+import flashdropLogo from "@/assets/flashdrop-logo.png";
 
 const ACCESS_MODES = [
   { value: "instant", label: "Instant", icon: Zap },
@@ -196,7 +197,7 @@ function InteractiveReceipt() {
 
 export default function Landing() {
   useEffect(() => {
-    document.title = "FlashDrop — Fast, live, temporary file handoff";
+    document.title = "FlashDroop — Fast, live, temporary file handoff";
 
     const observer = new IntersectionObserver(
       (entries) => {
@@ -218,11 +219,11 @@ export default function Landing() {
 
       <nav className="fd-nav">
         <Link to="/" className="fd-nav-brand" aria-label="FlashDrop home">
-          <BrandMark small />
-          <div>
-            <strong>FlashDroop</strong>
-            <span>EPHEMERAL HANDOFF</span>
-          </div>
+            <img
+              src={flashdropLogo}
+              alt="FlashDrop"
+              className="fd-brand-logo"
+            />
         </Link>
 
         <div className="fd-nav-center" aria-label="Landing page sections">
@@ -410,8 +411,11 @@ export default function Landing() {
 
       <footer className="fd-footer">
         <Link to="/" className="fd-nav-brand">
-          <BrandMark small />
-          <div><strong>FlashDroop</strong><span>EPHEMERAL HANDOFF</span></div>
+          <img
+            src={flashdropLogo}
+            alt="FlashDrop"
+            className="fd-brand-logo"
+          />
         </Link>
         <p>Fast · Live · Temporary — © 2026 FlashDroop</p>
         <div>
