@@ -3,7 +3,7 @@ import axios from "axios";
 const BACKEND_URL = (import.meta.env.VITE_BACKEND_URL || import.meta.env.REACT_APP_BACKEND_URL || "").replace(/\/$/, "");
 export const API = `${BACKEND_URL}/api`;
 
-export const MAX_BUNDLE_SIZE = 700 * 1024 * 1024;
+export const MAX_BUNDLE_SIZE = 1540 * 1024 * 1024;
 export const MAX_FILES_PER_BUNDLE = 20;
 
 export function formatSize(bytes) {

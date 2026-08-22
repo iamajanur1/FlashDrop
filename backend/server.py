@@ -33,7 +33,7 @@ load_dotenv(ROOT_DIR / ".env")
 UPLOAD_DIR = ROOT_DIR / "uploads"
 UPLOAD_DIR.mkdir(exist_ok=True)
 
-MAX_BUNDLE_SIZE = 700 * 1024 * 1024  # 700 MB total per drop
+MAX_BUNDLE_SIZE = 1540 * 1024 * 1024  # 1.54 GB total per drop
 MAX_FILES_PER_BUNDLE = 20
 ALLOWED_EXPIRY_MIN = {10, 30, 60}
 ALLOWED_MAX_PICKUPS = {1, 3, 5, 10}

@@ -182,7 +182,7 @@ export default function SendFlow() {
 
     const nextSize = combined.reduce((sum, file) => sum + file.size, 0);
     if (nextSize > MAX_BUNDLE_SIZE) {
-      toast.error(`Bundle exceeds 700MB total. Selected: ${formatSize(nextSize)}.`);
+      toast.error(`Bundle exceeds 1.5GB total. Selected: ${formatSize(nextSize)}.`);
       return;
     }
 

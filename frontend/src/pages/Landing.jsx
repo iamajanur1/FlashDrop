@@ -255,7 +255,7 @@ export default function Landing() {
 
           <div className="fd-proof-row">
             <div><b>0</b><span>accounts</span></div>
-            <div><b>700MB</b><span>per drop</span></div>
+            <div><b>1.5GB</b><span>per drop</span></div>
             <div><b>20</b><span>files</span></div>
             <div><b>10–60m</b><span>auto-expiry</span></div>
           </div>
