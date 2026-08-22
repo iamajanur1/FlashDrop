@@ -22,7 +22,6 @@ import {
   Zap,
 } from "lucide-react";
 import "./Landing.css";
-import flashdropLogo from "@/assets/flashdrop-logo.png";
 import flashdropMark from "@/assets/flashdrop-mark.png";
 
 const ACCESS_MODES = [
@@ -39,11 +38,15 @@ const EVENT_COPY = {
   rejected: "Receiver rejected",
 };
 
-function BrandMark({ small = false }) {
+function Brand() {
   return (
-    <div className={`fd-brand-mark ${small ? "is-small" : ""}`} aria-hidden="true">
-      <Zap fill="currentColor" strokeWidth={2.4} />
-    </div>
+    <Link to="/" className="landing-brand" aria-label="FlashDroop home">
+      <img src={flashdropMark} alt="" className="landing-brand-mark" />
+      <span className="landing-brand-copy">
+        <strong>FlashDroop</strong>
+        <small>EPHEMERAL HANDOFF</small>
+      </span>
+    </Link>
   );
 }
 
@@ -97,6 +100,7 @@ function InteractiveReceipt() {
 
   useEffect(() => {
     if (status !== "streaming") return undefined;
+
     const timer = window.setInterval(() => {
       setProgress((current) => {
         const next = Math.min(100, current + Math.max(4, Math.round((100 - current) / 9)));
@@ -110,22 +114,23 @@ function InteractiveReceipt() {
         return next;
       });
     }, 280);
+
     return () => window.clearInterval(timer);
   }, [status]);
 
   const statusLabel = useMemo(() => EVENT_COPY[status] || "Ready", [status]);
 
   return (
-    <div className="fd-demo-shell">
-      <div className="fd-demo-toolbar">
+    <div className="demo-panel">
+      <div className="demo-panel-head">
         <div>
-          <span className="fd-demo-kicker">INTERACTIVE PREVIEW</span>
-          <strong>Flash Claim + Live Receipt</strong>
+          <span>LIVE PREVIEW</span>
+          <strong>See a pickup happen before you send.</strong>
         </div>
-        <span className="fd-live-chip"><span /> LIVE</span>
+        <span className="live-badge"><i /> LIVE</span>
       </div>
 
-      <div className="fd-demo-modes" aria-label="Preview access mode">
+      <div className="demo-mode-tabs" aria-label="Preview access mode">
         {ACCESS_MODES.map((item) => {
           const Icon = item.icon;
           return (
@@ -141,26 +146,26 @@ function InteractiveReceipt() {
         })}
       </div>
 
-      <div className="fd-demo-file">
-        <div className="fd-file-icon"><UploadCloud /></div>
-        <div className="fd-demo-file-meta">
+      <div className="demo-file">
+        <div className="demo-file-icon"><UploadCloud /></div>
+        <div className="demo-file-copy">
           <strong>launch_assets.zip</strong>
           <span>186.4 MB · 7 files</span>
         </div>
-        <div className="fd-expire-chip"><Clock3 /> 24:18</div>
+        <div className="demo-time"><Clock3 /> 24:18</div>
       </div>
 
-      <div className="fd-demo-progress-wrap">
-        <div className="fd-demo-progress-head">
+      <div className="demo-progress-wrap">
+        <div className="demo-progress-head">
           <span>{statusLabel}</span>
           <b>{status === "streaming" || status === "complete" ? `${progress}%` : "READY"}</b>
         </div>
-        <div className="fd-demo-progress"><span style={{ width: `${progress}%` }} /></div>
+        <div className="demo-progress"><span style={{ width: `${progress}%` }} /></div>
       </div>
 
       {status === "waiting" && (
-        <div className="fd-claim-request">
-          <div className="fd-device-avatar"><MousePointer2 /></div>
+        <div className="demo-claim">
+          <div className="demo-device"><MousePointer2 /></div>
           <div>
             <strong>iPhone · Safari</strong>
             <span>wants to claim this drop</span>
@@ -170,27 +175,27 @@ function InteractiveReceipt() {
         </div>
       )}
 
-      <div className="fd-receipt-list" aria-live="polite">
+      <div className="demo-events" aria-live="polite">
         {events.map((event) => (
-          <div key={event.id} className={`fd-receipt-item tone-${event.tone}`}>
-            <span className="fd-receipt-dot" />
+          <div key={event.id} className={`demo-event tone-${event.tone}`}>
+            <span className="demo-event-dot" />
             <span>{event.label}</span>
             <small>{event.time}</small>
           </div>
         ))}
       </div>
 
-      <div className="fd-demo-actions">
+      <div className="demo-actions">
         <button
           type="button"
-          className="fd-demo-primary"
+          className="demo-primary"
           onClick={simulateReceiver}
           disabled={status === "waiting" || status === "streaming"}
         >
           {status === "complete" || status === "rejected" ? "Run again" : "Simulate receiver"}
           <ArrowRight />
         </button>
-        <span>Try the modes above</span>
+        <span>Nothing here uploads anywhere.</span>
       </div>
     </div>
   );
@@ -215,215 +220,221 @@ export default function Landing() {
   }, []);
 
   return (
-    <div className="fd-landing" data-testid="landing-page">
-      <div className="fd-landing-noise" aria-hidden="true" />
+    <div className="landing-page" data-testid="landing-page">
+      <div className="landing-bg" aria-hidden="true" />
 
-      <nav className="fd-nav">
-        <Link to="/" className="fd-nav-brand" aria-label="FlashDrop home">
-          <img
-            src={flashdropMark}
-            alt="FlashDrop"
-            className="fd-brand-logo"
-          />
-          <strong>FlashDroop</strong>
-           <span className="hidden sm:block mt-1 text-[7px] leading-none tracking-[0.2em] font-bold text-gray-400 whitespace-nowrap">
-                EPHEMERAL HANDOFF
-              </span>
-        </Link>
+      <nav className="landing-nav">
+        <Brand />
 
-        <div className="fd-nav-center" aria-label="Landing page sections">
+        <div className="landing-nav-links" aria-label="Landing page sections">
           <a href="#how">How it works</a>
           <a href="#control">Control</a>
-          <a href="#performance">Speed</a>
+          <a href="#security">Why FlashDroop</a>
         </div>
 
-        <div className="fd-nav-actions">
-          <Link to="/app/receive" className="fd-nav-receive"><Download /> Receive</Link>
-          <Link to="/app/send" className="fd-nav-launch">Open app <ArrowRight /></Link>
+        <div className="landing-nav-actions">
+          <Link to="/app/receive" className="nav-secondary"><Download /> Receive</Link>
+          <Link to="/app/send" className="nav-primary">Open app <ArrowRight /></Link>
         </div>
       </nav>
 
-      <header className="fd-hero">
-        <div className="fd-hero-copy" data-reveal>
-          <div className="fd-eyebrow"><span className="fd-eyebrow-pulse" /> FAST · LIVE · TEMPORARY</div>
-          <h1>
-            Files should move<br />
-            <span>faster than trust.</span>
-          </h1>
-          <p>
-            FlashDroop is a controlled, self-destructing file handoff. Your six-digit PIN appears before the upload finishes, receivers can join immediately, and each file unlocks the moment it is ready.
-          </p>
+      <main>
+        <section className="hero-section">
+          <div className="hero-copy" data-reveal>
+            <div className="hero-kicker"><span /> FAST · LIVE · TEMPORARY</div>
+            <h1>
+              File handoff,
+              <span> without the cloud-drive baggage.</span>
+            </h1>
+            <p>
+              Create a six-digit PIN immediately, start uploading in the background,
+              and let receivers pick up files the moment they are ready.
+            </p>
 
-          <div className="fd-hero-actions">
-            <Link to="/app/send" className="fd-primary-cta"><Send /> Send files now <ArrowRight /></Link>
-            <Link to="/app/receive" className="fd-secondary-cta"><Download /> I have a PIN</Link>
-          </div>
+            <div className="hero-actions">
+              <Link to="/app/send" className="hero-primary"><Send /> Send files <ArrowRight /></Link>
+              <Link to="/app/receive" className="hero-secondary"><Download /> I have a PIN</Link>
+            </div>
 
-          <div className="fd-proof-row">
-            <div><b>0</b><span>accounts</span></div>
-            <div><b>1.5GB</b><span>per drop</span></div>
-            <div><b>20</b><span>files</span></div>
-            <div><b>10–60m</b><span>auto-expiry</span></div>
-          </div>
-        </div>
-
-        <div className="fd-hero-visual" data-reveal>
-          <div className="fd-orbit fd-orbit-one" aria-hidden="true" />
-          <div className="fd-orbit fd-orbit-two" aria-hidden="true" />
-          <div className="fd-visual-card fd-visual-main">
-            <div className="fd-visual-top">
-              <span>ACTIVE DROP</span>
-              <span className="fd-live-chip"><span /> LIVE</span>
-            </div>
-            <div className="fd-visual-file">
-              <div className="fd-visual-file-icon"><Sparkles /></div>
-              <div><strong>campaign_master.zip</strong><span>412.8 MB · 12 files</span></div>
-              <b>67%</b>
-            </div>
-            <div className="fd-visual-progress"><span /></div>
-            <div className="fd-visual-pin">
-              <span>SHARE PIN</span>
-              <strong>482 913</strong>
-            </div>
-            <div className="fd-visual-stats">
-              <div><Users /><span><b>2</b> pickups left</span></div>
-              <div><TimerReset /><span><b>24:18</b> expires</span></div>
+            <div className="hero-trust">
+              <div><strong>0</strong><span>accounts</span></div>
+              <div><strong>20</strong><span>files per drop</span></div>
+              <div><strong>10–60m</strong><span>auto-expiry</span></div>
             </div>
           </div>
 
-          <div className="fd-visual-card fd-floating-card fd-floating-one">
-            <UserCheck />
-            <div><strong>Receiver approved</strong><span>iPhone · Safari</span></div>
-            <CheckCircle2 />
+          <div className="hero-product" data-reveal>
+            <div className="product-frame">
+              <div className="product-topbar">
+                <span>ACTIVE DROP</span>
+                <span className="live-badge"><i /> LIVE</span>
+              </div>
+
+              <div className="product-file">
+                <div className="product-file-icon"><Sparkles /></div>
+                <div>
+                  <strong>campaign_master.zip</strong>
+                  <span>412.8 MB · 12 files</span>
+                </div>
+                <b>67%</b>
+              </div>
+
+              <div className="product-progress"><span /></div>
+
+              <div className="product-pin">
+                <span>SHARE PIN</span>
+                <strong>482 913</strong>
+              </div>
+
+              <div className="product-stats">
+                <div><Users /><span><b>2</b> pickups left</span></div>
+                <div><TimerReset /><span><b>24:18</b> expires</span></div>
+              </div>
+            </div>
+
+            <div className="product-float product-float-top">
+              <UserCheck />
+              <div><strong>Receiver approved</strong><span>iPhone · Safari</span></div>
+              <CheckCircle2 />
+            </div>
+
+            <div className="product-float product-float-bottom">
+              <Flame />
+              <div><strong>Burn rule</strong><span>After all pickups</span></div>
+            </div>
           </div>
-          <div className="fd-visual-card fd-floating-card fd-floating-two">
-            <Flame />
-            <div><strong>Burn rule</strong><span>After all pickups</span></div>
+        </section>
+
+        <section className="feature-strip" data-reveal>
+          <div><Gauge /><strong>Live Drop</strong><span>Share before upload finishes</span></div>
+          <div><Zap /><strong>Native streaming</strong><span>Files unlock as they become ready</span></div>
+          <div><ShieldCheck /><strong>Controlled access</strong><span>PIN discovers; pickup rules decide</span></div>
+          <div><Radio /><strong>Live receipt</strong><span>See claims, progress, completion</span></div>
+        </section>
+
+        <section className="content-section" id="how">
+          <div className="section-intro" data-reveal>
+            <span className="section-label">HOW IT WORKS</span>
+            <h2>Three steps. No account ceremony.</h2>
+            <p>FlashDroop keeps the transfer itself in focus: create, share, confirm.</p>
           </div>
-        </div>
-      </header>
 
-      <section className="fd-speed-ribbon" id="performance" data-reveal>
-        <div><Gauge /><strong>Live Drop</strong><span>Share the PIN while upload continues</span></div>
-        <div><Zap /><strong>Streaming ZIP</strong><span>Starts before archive completion</span></div>
-        <div><ShieldCheck /><strong>Capability tokens</strong><span>PIN is discovery, not admin access</span></div>
-        <div><Radio /><strong>Live receipts</strong><span>Server-side lifecycle events</span></div>
-      </section>
+          <div className="steps-grid">
+            <article className="step-card" data-reveal>
+              <span className="step-index">01</span>
+              <div className="step-icon"><UploadCloud /></div>
+              <h3>Create the drop</h3>
+              <p>Select files and choose your expiry, pickup count, and access mode.</p>
+              <span className="step-meta">PIN FIRST</span>
+            </article>
 
-      <section className="fd-section fd-how" id="how">
-        <div className="fd-section-heading" data-reveal>
-          <div className="fd-section-label">01 / HOW IT WORKS</div>
-          <h2>A transfer with a beginning, a receipt, and an ending.</h2>
-          <p>No dashboard maze. No account ceremony. The full workflow stays understandable even when the controls get advanced.</p>
-        </div>
+            <article className="step-card" data-reveal>
+              <span className="step-index">02</span>
+              <div className="step-icon"><Send /></div>
+              <h3>Share the PIN</h3>
+              <p>The receiver can join while uploads continue in the background.</p>
+              <span className="step-meta">LIVE UPLOAD</span>
+            </article>
 
-        <div className="fd-step-grid">
-          <article className="fd-step-card" data-reveal>
-            <span className="fd-step-number">01</span>
-            <div className="fd-step-icon"><UploadCloud /></div>
-            <h3>Create the PIN first</h3>
-            <p>Select up to 20 files. FlashDroop creates the handoff immediately, then uploads files in parallel while you already share the PIN or QR.</p>
-            <span className="fd-step-meta">LIVE DROP · 700MB</span>
-          </article>
-          <article className="fd-step-card" data-reveal>
-            <span className="fd-step-number">02</span>
-            <div className="fd-step-icon"><UserCheck /></div>
-            <h3>Set the pickup rules</h3>
-            <p>Pick Instant, Confirm, or One Device. Choose pickup passes, expiry, and exactly when the drop should burn.</p>
-            <span className="fd-step-meta">YOU CONTROL ACCESS</span>
-          </article>
-          <article className="fd-step-card" data-reveal>
-            <span className="fd-step-number">03</span>
-            <div className="fd-step-icon"><Radio /></div>
-            <h3>Watch it happen</h3>
-            <p>See claim requests, approvals, starts, progress, completion, interruptions, and the final burn event.</p>
-            <span className="fd-step-meta">LIVE RECEIPT</span>
-          </article>
-        </div>
-      </section>
+            <article className="step-card" data-reveal>
+              <span className="step-index">03</span>
+              <div className="step-icon"><Radio /></div>
+              <h3>Watch the handoff</h3>
+              <p>See claim requests, transfer progress, completion, and burn events.</p>
+              <span className="step-meta">LIVE RECEIPT</span>
+            </article>
+          </div>
+        </section>
 
-      <section className="fd-section fd-control" id="control">
-        <div className="fd-section-heading compact" data-reveal>
-          <div className="fd-section-label">02 / CONTROL</div>
-          <h2>Try the interaction before you send anything.</h2>
-          <p>The live preview below is local-only. Switch access modes and simulate how a receiver claims a drop.</p>
-        </div>
-        <div data-reveal><InteractiveReceipt /></div>
-      </section>
+        <section className="control-section" id="control">
+          <div className="control-copy" data-reveal>
+            <span className="section-label">CONTROL</span>
+            <h2>Decide how a receiver gets in.</h2>
+            <p>
+              Instant for speed. Confirm when you want approval. One Device when the
+              first receiver should own the handoff.
+            </p>
 
-      <section className="fd-section fd-bento-section">
-        <div className="fd-section-heading" data-reveal>
-          <div className="fd-section-label">03 / DIFFERENT BY DESIGN</div>
-          <h2>Not another cloud drive with a temporary link.</h2>
-          <p>FlashDroop is built around the handoff itself: presence, control, proof, speed, and intentional deletion.</p>
-        </div>
-
-        <div className="fd-bento-grid">
-          <article className="fd-bento-card fd-bento-large" data-reveal>
-            <div className="fd-bento-icon"><UserCheck /></div>
-            <span className="fd-bento-tag">FLASH CLAIM</span>
-            <h3>Approve the receiver, not just the code.</h3>
-            <p>In Confirm mode, the receiver can discover the drop with the PIN but cannot download until the sender approves that pickup session.</p>
-            <div className="fd-mini-claim">
-              <div><span className="fd-avatar-dot">iP</span><div><b>iPhone · Safari</b><small>Waiting for approval</small></div></div>
-              <button type="button">Approve</button>
+            <div className="control-list">
+              <div><CheckCircle2 /><span><b>Instant</b> — claim immediately with the PIN.</span></div>
+              <div><UserCheck /><span><b>Confirm</b> — you approve the device first.</span></div>
+              <div><LockKeyhole /><span><b>One Device</b> — first approved pickup wins.</span></div>
             </div>
-          </article>
+          </div>
 
-          <article className="fd-bento-card" data-reveal>
-            <div className="fd-bento-icon"><Users /></div>
-            <span className="fd-bento-tag">PICKUP PASSES</span>
-            <h3>Count receivers, not HTTP requests.</h3>
-            <p>One claimed pass can retrieve the whole bundle without wasting a slot for every individual file.</p>
-          </article>
+          <div data-reveal>
+            <InteractiveReceipt />
+          </div>
+        </section>
 
-          <article className="fd-bento-card" data-reveal>
-            <div className="fd-bento-icon"><Flame /></div>
-            <span className="fd-bento-tag">BURN RULES</span>
-            <h3>Make deletion part of the workflow.</h3>
-            <p>Burn on expiry, after the first completed pickup, after all pickup passes, or instantly from the sender screen.</p>
-          </article>
+        <section className="why-section" id="security">
+          <div className="section-intro" data-reveal>
+            <span className="section-label">WHY FLASHDROOP</span>
+            <h2>Designed like a handoff, not a storage product.</h2>
+          </div>
 
-          <article className="fd-bento-card fd-bento-wide" data-reveal>
-            <div className="fd-receipt-visual">
-              <div><span className="ok" /><b>11:42:04</b><strong>Receiver claimed pickup</strong></div>
-              <div><span className="ok" /><b>11:42:07</b><strong>Download started</strong></div>
-              <div><span className="active" /><b>11:42:11</b><strong>186 MB / 412 MB · streaming</strong></div>
-              <div><span /><b>—</b><strong>Pickup completion</strong></div>
-            </div>
-            <div>
-              <div className="fd-bento-icon"><Radio /></div>
-              <span className="fd-bento-tag">LIVE RECEIPT</span>
-              <h3>See the transfer lifecycle as it happens.</h3>
-              <p>The sender gets a server-side activity trail instead of an ambiguous “someone clicked download” message.</p>
-            </div>
-          </article>
-        </div>
-      </section>
+          <div className="why-grid">
+            <article className="why-card why-card-dark" data-reveal>
+              <div className="why-icon"><UserCheck /></div>
+              <span className="why-tag">PICKUP CONTROL</span>
+              <h3>Approve a receiver, not just a code.</h3>
+              <p>
+                Confirm mode keeps discovery and permission separate. The PIN finds the
+                drop; your approval unlocks it.
+              </p>
+              <div className="mini-claim">
+                <div><span className="avatar">iP</span><span><b>iPhone · Safari</b><small>Waiting for approval</small></span></div>
+                <button type="button">Approve</button>
+              </div>
+            </article>
 
-      <section className="fd-final-cta" data-reveal>
-        <div className="fd-final-glow" aria-hidden="true" />
-        <div>
-          <span className="fd-section-label light">READY WHEN YOU ARE</span>
-          <h2>Send it. See the pickup. Burn it.</h2>
-          <p>Create the PIN immediately, share while files are still moving, and keep full pickup and burn control without an account.</p>
-        </div>
-        <div className="fd-final-actions">
-          <Link to="/app/send" className="fd-primary-cta light"><Send /> Start a FlashDroop <ArrowRight /></Link>
-          <Link to="/app/receive" className="fd-secondary-cta light"><Download /> Receive with PIN</Link>
-        </div>
-      </section>
+            <article className="why-card" data-reveal>
+              <div className="why-icon"><Users /></div>
+              <span className="why-tag">PICKUP PASSES</span>
+              <h3>Count receivers, not file requests.</h3>
+              <p>One pickup session can retrieve the whole bundle without wasting a slot on every file.</p>
+            </article>
 
-      <footer className="fd-footer">
-        <Link to="/" className="fd-nav-brand" aria-label="FlashDrop home">
-          <img
-            src={flashdropMark}
-            alt="FlashDrop"
-            className="fd-brand-logo"
-          />
-          <strong>FlashDroop</strong>
+            <article className="why-card" data-reveal>
+              <div className="why-icon"><Flame /></div>
+              <span className="why-tag">BURN RULES</span>
+              <h3>Deletion is part of the workflow.</h3>
+              <p>Expire on time, burn after a pickup, or close the drop manually when you are done.</p>
+            </article>
 
-        </Link>
+            <article className="why-card why-card-wide" data-reveal>
+              <div className="receipt-list">
+                <div><span className="ok" /><b>11:42:04</b><strong>Receiver claimed pickup</strong></div>
+                <div><span className="ok" /><b>11:42:07</b><strong>Download started</strong></div>
+                <div><span className="active" /><b>11:42:11</b><strong>186 MB / 412 MB · streaming</strong></div>
+                <div><span /><b>—</b><strong>Pickup completion</strong></div>
+              </div>
+              <div>
+                <div className="why-icon"><Radio /></div>
+                <span className="why-tag">LIVE RECEIPT</span>
+                <h3>Know what actually happened.</h3>
+                <p>Claims, starts, progress, completion, interruptions, and burn events stay visible in one place.</p>
+              </div>
+            </article>
+          </div>
+        </section>
+
+        <section className="closing-cta" data-reveal>
+          <div>
+            <span>READY WHEN YOU ARE</span>
+            <h2>Send it. See the pickup. Burn it.</h2>
+            <p>No account, no drive folder, no long-lived share link.</p>
+          </div>
+
+          <div className="closing-actions">
+            <Link to="/app/send" className="closing-primary"><Send /> Start a FlashDroop <ArrowRight /></Link>
+            <Link to="/app/receive" className="closing-secondary"><Download /> Receive with PIN</Link>
+          </div>
+        </section>
+      </main>
+
+      <footer className="landing-footer">
+        <Brand />
         <p>Fast · Live · Temporary — © 2026 FlashDroop</p>
         <div>
           <Link to="/app/send">Send</Link>
