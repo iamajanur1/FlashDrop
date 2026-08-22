@@ -23,6 +23,7 @@ import {
 } from "lucide-react";
 import "./Landing.css";
 import flashdropLogo from "@/assets/flashdrop-logo.png";
+import flashdropMark from "@/assets/flashdrop-mark.png";
 
 const ACCESS_MODES = [
   { value: "instant", label: "Instant", icon: Zap },
@@ -219,11 +220,12 @@ export default function Landing() {
 
       <nav className="fd-nav">
         <Link to="/" className="fd-nav-brand" aria-label="FlashDrop home">
-            <img
-              src={flashdropLogo}
-              alt="FlashDrop"
-              className="fd-brand-logo"
-            />
+          <img
+            src={flashdropMark}
+            alt="FlashDrop"
+            className="fd-brand-logo"
+          />
+          <strong>FlashDroop</strong>
         </Link>
 
         <div className="fd-nav-center" aria-label="Landing page sections">
@@ -410,12 +412,13 @@ export default function Landing() {
       </section>
 
       <footer className="fd-footer">
-        <Link to="/" className="fd-nav-brand">
+        <Link to="/" className="fd-nav-brand" aria-label="FlashDrop home">
           <img
-            src={flashdropLogo}
+            src={flashdropMark}
             alt="FlashDrop"
             className="fd-brand-logo"
           />
+          <strong>FlashDroop</strong>
         </Link>
         <p>Fast · Live · Temporary — © 2026 FlashDroop</p>
         <div>

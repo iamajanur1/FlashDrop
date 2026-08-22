@@ -51,17 +51,19 @@
   box-shadow: 0 10px 34px rgba(18, 14, 37, .06);
   position: sticky !important; top: 14px; z-index: 30 !important;
 }
-.fd-nav-brand { display: inline-flex; align-items: center; gap: 10px; width: max-content; }
+.fd-nav-brand { display: inline-flex; align-items: center; gap: 9px; width: max-content; }
 
 .fd-brand-logo {
   display: block;
   width: auto;
-  height: 70px;
-  max-width: 210px;
+  height: 42px;
   object-fit: contain;
 }
-.fd-nav-brand div:last-child { display: flex; flex-direction: column; gap: 3px; }
-.fd-nav-brand strong { font-size: 15px; letter-spacing: -.02em; line-height: 1; }
+.fd-nav-brand strong {
+  font-size: 17px;
+  font-weight: 800;
+  letter-spacing: -0.03em;
+}
 .fd-nav-brand span { font-size: 8px; letter-spacing: .2em; color: #8a8b96; font-weight: 800; }
 .fd-nav-center { display: flex; align-items: center; gap: 7px; padding: 4px; border-radius: 12px; }
 .fd-nav-center a { font-size: 12px; font-weight: 700; color: #666875; padding: 9px 12px; border-radius: 10px; transition: .2s ease; }
