@@ -226,6 +226,9 @@ export default function Landing() {
             className="fd-brand-logo"
           />
           <strong>FlashDroop</strong>
+           <span className="hidden sm:block mt-1 text-[7px] leading-none tracking-[0.2em] font-bold text-gray-400 whitespace-nowrap">
+                EPHEMERAL HANDOFF
+              </span>
         </Link>
 
         <div className="fd-nav-center" aria-label="Landing page sections">
@@ -419,6 +422,7 @@ export default function Landing() {
             className="fd-brand-logo"
           />
           <strong>FlashDroop</strong>
+
         </Link>
         <p>Fast · Live · Temporary — © 2026 FlashDroop</p>
         <div>
