@@ -220,7 +220,7 @@ export default function Landing() {
         <Link to="/" className="fd-nav-brand" aria-label="FlashDrop home">
           <BrandMark small />
           <div>
-            <strong>FlashDrop</strong>
+            <strong>FlashDroop</strong>
             <span>EPHEMERAL HANDOFF</span>
           </div>
         </Link>
@@ -245,7 +245,7 @@ export default function Landing() {
             <span>faster than trust.</span>
           </h1>
           <p>
-            FlashDrop is a controlled, self-destructing file handoff. Your six-digit PIN appears before the upload finishes, receivers can join immediately, and each file unlocks the moment it is ready.
+            FlashDroop is a controlled, self-destructing file handoff. Your six-digit PIN appears before the upload finishes, receivers can join immediately, and each file unlocks the moment it is ready.
           </p>
 
           <div className="fd-hero-actions">
@@ -316,7 +316,7 @@ export default function Landing() {
             <span className="fd-step-number">01</span>
             <div className="fd-step-icon"><UploadCloud /></div>
             <h3>Create the PIN first</h3>
-            <p>Select up to 20 files. FlashDrop creates the handoff immediately, then uploads files in parallel while you already share the PIN or QR.</p>
+            <p>Select up to 20 files. FlashDroop creates the handoff immediately, then uploads files in parallel while you already share the PIN or QR.</p>
             <span className="fd-step-meta">LIVE DROP · 700MB</span>
           </article>
           <article className="fd-step-card" data-reveal>
@@ -349,7 +349,7 @@ export default function Landing() {
         <div className="fd-section-heading" data-reveal>
           <div className="fd-section-label">03 / DIFFERENT BY DESIGN</div>
           <h2>Not another cloud drive with a temporary link.</h2>
-          <p>FlashDrop is built around the handoff itself: presence, control, proof, speed, and intentional deletion.</p>
+          <p>FlashDroop is built around the handoff itself: presence, control, proof, speed, and intentional deletion.</p>
         </div>
 
         <div className="fd-bento-grid">
@@ -403,7 +403,7 @@ export default function Landing() {
           <p>Create the PIN immediately, share while files are still moving, and keep full pickup and burn control without an account.</p>
         </div>
         <div className="fd-final-actions">
-          <Link to="/app/send" className="fd-primary-cta light"><Send /> Start a FlashDrop <ArrowRight /></Link>
+          <Link to="/app/send" className="fd-primary-cta light"><Send /> Start a FlashDroop <ArrowRight /></Link>
           <Link to="/app/receive" className="fd-secondary-cta light"><Download /> Receive with PIN</Link>
         </div>
       </section>
@@ -411,9 +411,9 @@ export default function Landing() {
       <footer className="fd-footer">
         <Link to="/" className="fd-nav-brand">
           <BrandMark small />
-          <div><strong>FlashDrop</strong><span>EPHEMERAL HANDOFF</span></div>
+          <div><strong>FlashDroop</strong><span>EPHEMERAL HANDOFF</span></div>
         </Link>
-        <p>Fast · Live · Temporary — © 2026 FlashDrop</p>
+        <p>Fast · Live · Temporary — © 2026 FlashDroop</p>
         <div>
           <Link to="/app/send">Send</Link>
           <Link to="/app/receive">Receive</Link>

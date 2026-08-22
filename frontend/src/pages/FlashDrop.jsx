@@ -46,7 +46,7 @@ export default function FlashDrop({ defaultTab = "send" }) {
               <Zap className="w-4 h-4 text-white" strokeWidth={2.6} fill="white" />
             </div>
             <span className="font-display font-bold text-[17px] text-gray-950 group-hover:text-indigo-600 transition-colors">
-              FlashDrop
+              FlashDroop
             </span>
           </Link>
 
